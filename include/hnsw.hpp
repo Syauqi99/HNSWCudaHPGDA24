@@ -104,7 +104,7 @@ namespace hnsw {
                 const auto nearest_candidate = candidates.top();
                 const auto& nearest_candidate_node = layers[l_c][nearest_candidate.id];
                 candidates.pop();
-
+                // i changed someting
                 if (nearest_candidate.dist > top_candidates.top().dist) break;
 
                 for (const auto neighbor : nearest_candidate_node.neighbors) {
