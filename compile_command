@@ -1,0 +1,2 @@
+nvcc main_1.cu -o cuda_program
+./cuda_program 

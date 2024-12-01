@@ -1,5 +1,5 @@
-#include <hnsw.hpp>
-#include <utils.hpp>
+#include <include_1/hnsw1.hpp>
+#include <include_1/utils1.hpp>
 #include <cuda_runtime.h> // Added for CUDA functionality
 #include <device_launch_parameters.h> // Added for device launch parameters
 #include <stdio.h> // Added for printf
@@ -16,7 +16,7 @@ __global__ void myKernel() {
 
 int main() {
 
-  const string base_dir = "C:/Users/Recup/OneDrive/Documentos/Contest/hpgda_contest_MM/";
+  const string base_dir = "/content/hpgda_contest_MM/";
 
   int k = 100;
   int m = 16;
