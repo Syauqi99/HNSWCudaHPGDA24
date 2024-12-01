@@ -7,6 +7,7 @@
 #include <fstream>
 #include <chrono>
 #include <cassert>
+#include <functional>
 #include <random>
 #include <map>
 
