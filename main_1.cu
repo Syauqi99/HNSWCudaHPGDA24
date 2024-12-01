@@ -1,12 +1,21 @@
 #include <hnsw.hpp>
 #include <utils.hpp>
+#include <cuda_runtime.h> // Added for CUDA functionality
+#include <device_launch_parameters.h> // Added for device launch parameters
+#include <stdio.h> // Added for printf
 
 #define REPETITIONS 1000
 
 using namespace utils;
 using namespace hnsw;
 
+// Added CUDA kernel definition
+__global__ void myKernel() {
+    printf("Hello from the GPU!\n");
+}
+
 int main() {
+
   const string base_dir = "C:/Users/Recup/OneDrive/Documentos/Contest/hpgda_contest_MM/";
 
   int k = 100;
@@ -59,6 +68,10 @@ int main() {
   }
   cout << "time for " << REPETITIONS * n_query
        << " queries: " << total_queries / 1000 << " [ms]" << endl;
+
+  // Added kernel launch
+  myKernel<<<1, 1>>>(); // Launch kernel with 1 block and 1 thread
+  cudaDeviceSynchronize(); // Wait for the GPU to finish
 
   const string save_name =
       "k" + to_string(k) + "-m" + to_string(m) + "-ef" + to_string(ef) + ".csv";
