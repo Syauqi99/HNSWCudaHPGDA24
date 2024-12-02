@@ -103,7 +103,7 @@ namespace utils {
         vector<float> vec2(p2.x.begin(), p2.x.end());
         
         // Call the CUDA distance function with these vectors
-        return cuda_euclidean_distance(vec1, vec2);
+        return hnsw::cuda_euclidean_distance(vec1, vec2);
     }
 
     // reading the data from files

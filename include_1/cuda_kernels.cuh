@@ -4,7 +4,7 @@
 #include <vector>
 
 // Forward declaration of utils::Data
-namespace utils {
+namespace utils_cuda {
     template <typename T>
     struct Data;
 }
