@@ -1,5 +1,5 @@
-#include <include_1/hnsw1.hpp>
-#include <include_1/utils1.hpp>
+#include <hnsw1.hpp>
+#include <utils1.hpp>
 #include <cuda_runtime.h> // Added for CUDA functionality
 #include <device_launch_parameters.h> // Added for device launch parameters
 #include <stdio.h> // Added for printf
