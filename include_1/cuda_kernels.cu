@@ -7,113 +7,98 @@ namespace hnsw {
 
 // CUDA kernel declarations
 __device__ float euclidean_distance_cuda(const float* a, const float* b, int dim) {
-    // Use shared memory for frequently accessed data
-    __shared__ float cache[256];
-    int tid = threadIdx.x;
     float sum = 0.0f;
-    
-    // Process multiple elements per thread using loop unrolling
-    #pragma unroll 4
-    for (int i = tid; i < dim; i += blockDim.x) {
+    for (int i = 0; i < dim; i++) {
         float diff = a[i] - b[i];
         sum += diff * diff;
     }
-    
-    // Store partial sum in shared memory
-    cache[tid] = sum;
-    __syncthreads();
-    
-    // Parallel reduction in shared memory
-    for (int stride = blockDim.x/2; stride > 0; stride >>= 1) {
-        if (tid < stride) {
-            cache[tid] += cache[tid + stride];
-        }
-        __syncthreads();
-    }
-    
-    return (tid == 0) ? sqrt(cache[0]) : 0.0f;
+    return sqrt(sum);
 }
 
+__global__ void batch_distance_calculation(const float* queries, 
+                                        const float* dataset,
+                                        float* distances,
+                                        int n_queries,
+                                        int n_points,
+                                        int dim) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < n_queries * n_points) {
+        int query_idx = idx / n_points;
+        int point_idx = idx % n_points;
+        
+        distances[idx] = euclidean_distance_cuda(
+            &queries[query_idx * dim],
+            &dataset[point_idx * dim],
+            dim
+        );
+    }
+}
+
+void cuda_batch_distance_calculation(const std::vector<float>& queries,
+                                   const std::vector<float>& dataset,
+                                   std::vector<float>& distances,
+                                   int n_queries,
+                                   int n_points,
+                                   int dim) {
+    // Allocate device memory
+    float *d_queries, *d_dataset, *d_distances;
+    cudaMalloc(&d_queries, queries.size() * sizeof(float));
+    cudaMalloc(&d_dataset, dataset.size() * sizeof(float));
+    cudaMalloc(&d_distances, distances.size() * sizeof(float));
+
+    // Copy data to device
+    cudaMemcpy(d_queries, queries.data(), queries.size() * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_dataset, dataset.data(), dataset.size() * sizeof(float), cudaMemcpyHostToDevice);
+
+    // Launch kernel
+    int threadsPerBlock = 256;
+    int blocksPerGrid = (n_queries * n_points + threadsPerBlock - 1) / threadsPerBlock;
+    batch_distance_calculation<<<blocksPerGrid, threadsPerBlock>>>(
+        d_queries, d_dataset, d_distances, n_queries, n_points, dim);
+
+    // Copy results back to host
+    cudaMemcpy(distances.data(), d_distances, distances.size() * sizeof(float), cudaMemcpyDeviceToHost);
+
+    // Free device memory
+    cudaFree(d_queries);
+    cudaFree(d_dataset);
+    cudaFree(d_distances);
+}
+
+// Implementation of the template function
+template <typename T>
 float cuda_euclidean_distance(const std::vector<float>& p1, const std::vector<float>& p2) {
     int dim = p1.size();
-    float result;
-    
-    // Use pinned memory for faster transfers
-    float *h_result;
-    cudaMallocHost(&h_result, sizeof(float));
-    
+    vector<float> result(1);
+
     // Allocate device memory
-    float *d_vec1, *d_vec2;
+    float *d_vec1, *d_vec2, *d_result;
     cudaMalloc(&d_vec1, dim * sizeof(float));
     cudaMalloc(&d_vec2, dim * sizeof(float));
-    
-    // Use asynchronous memory transfers
-    cudaStream_t stream;
-    cudaStreamCreate(&stream);
-    
-    cudaMemcpyAsync(d_vec1, p1.data(), dim * sizeof(float), cudaMemcpyHostToDevice, stream);
-    cudaMemcpyAsync(d_vec2, p2.data(), dim * sizeof(float), cudaMemcpyHostToDevice, stream);
-    
-    // Launch kernel with optimal thread configuration
+    cudaMalloc(&d_result, sizeof(float));
+
+    // Copy data to device
+    cudaMemcpy(d_vec1, p1.data(), dim * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_vec2, p2.data(), dim * sizeof(float), cudaMemcpyHostToDevice);
+
+    // Launch kernel
     int threadsPerBlock = 256;
-    int blocksPerGrid = 1;
-    batch_distance_calculation<<<blocksPerGrid, threadsPerBlock, 0, stream>>>(
-        d_vec1, d_vec2, h_result, dim);
-    
-    // Synchronize and get result
-    cudaStreamSynchronize(stream);
-    result = *h_result;
-    
-    // Cleanup
+    int blocksPerGrid = (dim + threadsPerBlock - 1) / threadsPerBlock;
+    batch_distance_calculation<<<blocksPerGrid, threadsPerBlock>>>(
+        d_vec1, d_vec2, d_result, 1, 1, dim);
+
+    // Copy result back to host
+    cudaMemcpy(result.data(), d_result, sizeof(float), cudaMemcpyDeviceToHost);
+
+    // Free device memory
     cudaFree(d_vec1);
     cudaFree(d_vec2);
-    cudaFreeHost(h_result);
-    cudaStreamDestroy(stream);
-    
-    return result;
+    cudaFree(d_result);
+
+    return result[0];
 }
 
-// Optimized batch kernel for multiple distance calculations
-__global__ void batch_distance_calculation(const float* queries,
-                                         const float* dataset,
-                                         float* distances,
-                                         int dim) {
-    extern __shared__ float shared_mem[];
-    float* query_shared = shared_mem;
-    float* data_shared = &shared_mem[blockDim.x];
-    
-    int tid = threadIdx.x;
-    float sum = 0.0f;
-    
-    // Load data into shared memory
-    if (tid < dim) {
-        query_shared[tid] = queries[tid];
-        data_shared[tid] = dataset[tid];
-    }
-    __syncthreads();
-    
-    // Compute distance using loop unrolling
-    #pragma unroll 4
-    for (int i = tid; i < dim; i += blockDim.x) {
-        float diff = query_shared[i] - data_shared[i];
-        sum += diff * diff;
-    }
-    
-    // Parallel reduction
-    __shared__ float partial_sums[256];
-    partial_sums[tid] = sum;
-    __syncthreads();
-    
-    for (int stride = blockDim.x/2; stride > 0; stride >>= 1) {
-        if (tid < stride) {
-            partial_sums[tid] += partial_sums[tid + stride];
-        }
-        __syncthreads();
-    }
-    
-    if (tid == 0) {
-        distances[0] = sqrt(partial_sums[0]);
-    }
-}
+// Explicit template instantiation
+template float cuda_euclidean_distance<float>(const vector<float>&, const vector<float>&);
 
-} // namespace hnsw
+} // namespace hnsw 
