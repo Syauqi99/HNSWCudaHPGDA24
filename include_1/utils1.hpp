@@ -80,13 +80,13 @@ namespace utils {
     // Dataset is the type alias so we can use dataset right away
     using Dataset = vector<Data<T>>;
     template <typename T = float>
-    using DistanceFunction = function<float(Data<T>, Data<T>)>;
+    using DistanceFunction = function<float(const Data<T>&, const Data<T>&)>;
     // this function wrapper that return float, with two parameters
     // abstract functions
 
     // Original CPU version of euclidean distance
     template <typename T = float>
-    auto euclidean_distance(const Data<T>& p1, const Data<T>& p2) {
+    float euclidean_distance(const Data<T>& p1, const Data<T>& p2) {
         float result = 0;
         for (size_t i = 0; i < p1.size(); i++) {
             result += std::pow(p1[i] - p2[i], 2);
@@ -105,15 +105,15 @@ namespace utils {
     template <typename T = float>
     DistanceFunction<T> get_distance_function(bool use_cuda = false) {
         if (use_cuda) {
-            return DistanceFunction<T>(cuda_euclidean_distance<T>);
+            return std::function<float(const Data<T>&, const Data<T>&)>(cuda_euclidean_distance<T>);
         }
-        return DistanceFunction<T>(euclidean_distance<T>);
+        return std::function<float(const Data<T>&, const Data<T>&)>(euclidean_distance<T>);
     }
 
     // Helper function to create a distance function directly
     template <typename T = float>
     DistanceFunction<T> make_cuda_distance() {
-        return DistanceFunction<T>(cuda_euclidean_distance<T>);
+        return std::function<float(const Data<T>&, const Data<T>&)>(cuda_euclidean_distance<T>);
     }
 
     // reading the data from files
