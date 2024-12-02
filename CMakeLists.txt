@@ -9,14 +9,12 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Enable CUDA
 enable_language(CUDA)
-set(CMAKE_CUDA_STANDARD 17)
-set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 
 # Add include directories
 include_directories(${PROJECT_SOURCE_DIR}/include_1)
 
 # Add the executable and specify the source file
-add_executable(hnsw1 main_1.cu)
+add_executable(hnsw1 main_1.cu include_1/cuda_kernels.cu)
 
 # Set CUDA specific flags
 set_target_properties(hnsw1 PROPERTIES
