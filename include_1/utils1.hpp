@@ -97,9 +97,12 @@ namespace utils {
 
     // CUDA version of euclidean distance
     template <typename T = float>
-    auto to_cuda_euclidean_distance(const Data<T>& p1, const Data<T>& p2) {
-        vector<float> vec1(p1.begin(), p1.end());
-        vector<float> vec2(p2.begin(), p2.end());
+    float to_cuda_euclidean_distance(const Data<T>& p1, const Data<T>& p2) {
+        // Convert the x data from Data objects to vectors
+        vector<float> vec1(p1.x.begin(), p1.x.end());
+        vector<float> vec2(p2.x.begin(), p2.x.end());
+        
+        // Call the CUDA distance function with these vectors
         return cuda_euclidean_distance(vec1, vec2);
     }
 

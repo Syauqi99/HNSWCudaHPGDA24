@@ -1,6 +1,7 @@
 #include <cuda_runtime.h>
 #include "cuda_kernels.cuh"
 #include <vector>
+using namespace std;
 
 namespace hnsw {
 
@@ -66,9 +67,9 @@ void cuda_batch_distance_calculation(const std::vector<float>& queries,
 
 // Implementation of the template function
 template <typename T>
-float cuda_euclidean_distance(const utils::Data<T>& p1, const utils::Data<T>& p2) {
+float cuda_euclidean_distance(const vector<float>& p1, const vector<float>& p2) {
     int dim = p1.size();
-    std::vector<float> result(1);
+    vector<float> result(1);
 
     // Allocate device memory
     float *d_vec1, *d_vec2, *d_result;
@@ -77,11 +78,14 @@ float cuda_euclidean_distance(const utils::Data<T>& p1, const utils::Data<T>& p2
     cudaMalloc(&d_result, sizeof(float));
 
     // Copy data to device
-    cudaMemcpy(d_vec1, vec1.data(), dim * sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_vec2, vec2.data(), dim * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_vec1, p1.data(), dim * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_vec2, p2.data(), dim * sizeof(float), cudaMemcpyHostToDevice);
 
-    // Launch kernel with 1 thread since we're only computing one distance
-    batch_distance_calculation<<<1, 1>>>(d_vec1, d_vec2, d_result, 1, 1, dim);
+    // Launch kernel
+    int threadsPerBlock = 256;
+    int blocksPerGrid = (dim + threadsPerBlock - 1) / threadsPerBlock;
+    batch_distance_calculation<<<blocksPerGrid, threadsPerBlock>>>(
+        d_vec1, d_vec2, d_result, 1, 1, dim);
 
     // Copy result back to host
     cudaMemcpy(result.data(), d_result, sizeof(float), cudaMemcpyDeviceToHost);
@@ -95,6 +99,6 @@ float cuda_euclidean_distance(const utils::Data<T>& p1, const utils::Data<T>& p2
 }
 
 // Explicit template instantiation
-template float cuda_euclidean_distance<float>(const utils::Data<float>&, const utils::Data<float>&);
+template float cuda_euclidean_distance<float>(const vector<float>&, const vector<float>&);
 
 } // namespace hnsw 
