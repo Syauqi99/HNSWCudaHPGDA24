@@ -10,6 +10,7 @@
 #include <functional>
 #include <random>
 #include <map>
+#include "cuda_kernels.cuh"  // Include CUDA functions
 
 using namespace std;
 
@@ -83,8 +84,7 @@ namespace utils {
     // this function wrapper that return float, with two parameters
     // abstract functions
 
-    // define the euclidian distance
-    // optimizes with CUDA
+    // Original CPU version of euclidean distance
     template <typename T = float>
     auto euclidean_distance(const Data<T>& p1, const Data<T>& p2) {
         float result = 0;
@@ -93,6 +93,21 @@ namespace utils {
         }
         result = std::sqrt(result);
         return result;
+    }
+
+    // CUDA version of euclidean distance
+    template <typename T = float>
+    auto cuda_euclidean_distance(const Data<T>& p1, const Data<T>& p2) {
+        return hnsw::cuda_euclidean_distance(p1, p2);
+    }
+
+    // Function to get the appropriate distance function based on use_cuda flag
+    template <typename T = float>
+    auto get_distance_function(bool use_cuda = false) {
+        if (use_cuda) {
+            return cuda_euclidean_distance<T>;
+        }
+        return euclidean_distance<T>;
     }
 
     // reading the data from files

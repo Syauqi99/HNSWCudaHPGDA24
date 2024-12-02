@@ -76,7 +76,7 @@ namespace hnsw {
                 ef_construction(ef_construction),
                 extend_candidates(extend_candidates),
                 keep_pruned_connections(keep_pruned_connections),
-                calc_dist(euclidean_distance<float>),
+                calc_dist(cuda_euclidean_distance<float>),
                 engine(42), unif_dist(0.0, 1.0) {}
 
         const Node& get_enter_node() const { return layers.back()[enter_node_id]; }
