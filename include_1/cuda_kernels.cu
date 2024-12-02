@@ -67,7 +67,7 @@ void cuda_batch_distance_calculation(const std::vector<float>& queries,
 
 // Implementation of the template function
 template <typename T>
-float cuda_euclidean_distance(const vector<float>& p1, const vector<float>& p2) {
+float cuda_euclidean_distance(const std::vector<float>& p1, const std::vector<float>& p2) {
     int dim = p1.size();
     vector<float> result(1);
 
