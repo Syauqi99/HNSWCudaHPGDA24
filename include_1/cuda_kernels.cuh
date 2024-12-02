@@ -3,13 +3,13 @@
 #include <cuda_runtime.h>
 #include <vector>
 
-namespace hnsw {
-
-// Forward declaration of the Data template from utils namespace
+// Forward declaration of utils::Data
 namespace utils {
     template <typename T>
     struct Data;
 }
+
+namespace hnsw {
 
 // CUDA kernel declarations
 __device__ float euclidean_distance_cuda(const float* a, const float* b, int dim);

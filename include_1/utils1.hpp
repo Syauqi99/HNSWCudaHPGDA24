@@ -95,17 +95,22 @@ namespace utils {
         return result;
     }
 
-    // CUDA version of euclidean distance
+    // CUDA version of euclidean distance - wrapper function
     template <typename T = float>
     float cuda_euclidean_distance(const Data<T>& p1, const Data<T>& p2) {
-        return hnsw::cuda_euclidean_distance(p1, p2);
+        // Explicitly specify that we're calling the CUDA version from hnsw namespace
+        return hnsw::cuda_euclidean_distance<T>(p1, p2);
     }
 
     // Function to get the appropriate distance function based on use_cuda flag
     template <typename T = float>
     DistanceFunction<T> get_distance_function(bool use_cuda = false) {
         if (use_cuda) {
-            return std::function<float(const Data<T>&, const Data<T>&)>(cuda_euclidean_distance<T>);
+            return std::function<float(const Data<T>&, const Data<T>&)>(
+                [](const Data<T>& p1, const Data<T>& p2) -> float {
+                    return cuda_euclidean_distance<T>(p1, p2);
+                }
+            );
         }
         return std::function<float(const Data<T>&, const Data<T>&)>(euclidean_distance<T>);
     }
@@ -113,7 +118,11 @@ namespace utils {
     // Helper function to create a distance function directly
     template <typename T = float>
     DistanceFunction<T> make_cuda_distance() {
-        return std::function<float(const Data<T>&, const Data<T>&)>(cuda_euclidean_distance<T>);
+        return std::function<float(const Data<T>&, const Data<T>&)>(
+            [](const Data<T>& p1, const Data<T>& p2) -> float {
+                return cuda_euclidean_distance<T>(p1, p2);
+            }
+        );
     }
 
     // reading the data from files
