@@ -68,8 +68,6 @@ void cuda_batch_distance_calculation(const std::vector<float>& queries,
 template <typename T>
 float cuda_euclidean_distance(const utils::Data<T>& p1, const utils::Data<T>& p2) {
     int dim = p1.size();
-    std::vector<float> vec1(p1.begin(), p1.end());
-    std::vector<float> vec2(p2.begin(), p2.end());
     std::vector<float> result(1);
 
     // Allocate device memory

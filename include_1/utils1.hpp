@@ -80,7 +80,7 @@ namespace utils {
     // Dataset is the type alias so we can use dataset right away
     using Dataset = vector<Data<T>>;
     template <typename T = float>
-    using DistanceFunction = function<float(const Data<T>&, const Data<T>&)>;
+    using DistanceFunction = function<float(Data<T>, Data<T>)>;
     // this function wrapper that return float, with two parameters
     // abstract functions
 
@@ -95,34 +95,12 @@ namespace utils {
         return result;
     }
 
-    // CUDA version of euclidean distance - wrapper function
+    // CUDA version of euclidean distance
     template <typename T = float>
-    float cuda_euclidean_distance(const Data<T>& p1, const Data<T>& p2) {
-        // Explicitly specify that we're calling the CUDA version from hnsw namespace
-        return hnsw::cuda_euclidean_distance<T>(p1, p2);
-    }
-
-    // Function to get the appropriate distance function based on use_cuda flag
-    template <typename T = float>
-    DistanceFunction<T> get_distance_function(bool use_cuda = false) {
-        if (use_cuda) {
-            return std::function<float(const Data<T>&, const Data<T>&)>(
-                [](const Data<T>& p1, const Data<T>& p2) -> float {
-                    return cuda_euclidean_distance<T>(p1, p2);
-                }
-            );
-        }
-        return std::function<float(const Data<T>&, const Data<T>&)>(euclidean_distance<T>);
-    }
-
-    // Helper function to create a distance function directly
-    template <typename T = float>
-    DistanceFunction<T> make_cuda_distance() {
-        return std::function<float(const Data<T>&, const Data<T>&)>(
-            [](const Data<T>& p1, const Data<T>& p2) -> float {
-                return cuda_euclidean_distance<T>(p1, p2);
-            }
-        );
+    auto to_cuda_euclidean_distance(const Data<T>& p1, const Data<T>& p2) {
+        vector<float> vec1(p1.begin(), p1.end());
+        vector<float> vec2(p2.begin(), p2.end());
+        return cuda_euclidean_distance(vec1, vec2);
     }
 
     // reading the data from files

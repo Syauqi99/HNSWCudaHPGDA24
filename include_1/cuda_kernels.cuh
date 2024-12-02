@@ -31,6 +31,5 @@ void cuda_batch_distance_calculation(const std::vector<float>& queries,
 
 // Drop-in replacement for euclidean_distance
 template <typename T = float>
-float cuda_euclidean_distance(const utils::Data<T>& p1, const utils::Data<T>& p2);
-
+float cuda_euclidean_distance(const vector<float>& p1, const vector<float>& p2);
 } // namespace hnsw 
