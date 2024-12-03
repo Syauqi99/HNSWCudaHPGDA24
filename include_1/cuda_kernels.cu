@@ -31,6 +31,28 @@ __device__ float euclidean_distance_cuda(const float* a, const float* b, int dim
     return (tid == 0) ? sqrt(shared_sum[0]) : 0.0f;
 }
 
+// Add the kernel implementation
+__global__ void batch_distance_calculation(
+    const float* queries,
+    const float* dataset,
+    float* distances,
+    int n_queries,
+    int n_points,
+    int dim
+) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < n_queries * n_points) {
+        int query_idx = idx / n_points;
+        int point_idx = idx % n_points;
+        
+        distances[idx] = euclidean_distance_cuda(
+            &queries[query_idx * dim],
+            &dataset[point_idx * dim],
+            dim
+        );
+    }
+}
+
 class AsyncDistanceCalculator {
 private:
     float *d_vectors = nullptr;  // Combined buffer for all vectors
@@ -98,6 +120,53 @@ float cuda_euclidean_distance(const vector<float>& p1, const vector<float>& p2) 
     return calculator.calculate_distance(p1, p2);
 }
 
-std::vector<float> batch_cuda_euclidean_distance(const std::vector<std::vector<float>>& vectors1, const std::vector<vector<float>>& vectors2, int batch_size);
+vector<float> batch_cuda_euclidean_distance(
+    const vector<vector<float>>& vectors1,
+    const vector<vector<float>>& vectors2,
+    int batch_size
+) {
+    if (vectors1.empty() || vectors2.empty() || vectors1.size() != vectors2.size()) {
+        return vector<float>();
+    }
+
+    int dim = vectors1[0].size();
+    vector<float> results(batch_size);
+    
+    // Flatten input vectors
+    vector<float> flat_vectors1, flat_vectors2;
+    flat_vectors1.reserve(batch_size * dim);
+    flat_vectors2.reserve(batch_size * dim);
+    
+    for (int i = 0; i < batch_size; i++) {
+        flat_vectors1.insert(flat_vectors1.end(), vectors1[i].begin(), vectors1[i].end());
+        flat_vectors2.insert(flat_vectors2.end(), vectors2[i].begin(), vectors2[i].end());
+    }
+    
+    // Allocate device memory
+    float *d_vec1, *d_vec2, *d_results;
+    cudaMalloc(&d_vec1, flat_vectors1.size() * sizeof(float));
+    cudaMalloc(&d_vec2, flat_vectors2.size() * sizeof(float));
+    cudaMalloc(&d_results, batch_size * sizeof(float));
+    
+    // Copy data to device
+    cudaMemcpy(d_vec1, flat_vectors1.data(), flat_vectors1.size() * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_vec2, flat_vectors2.data(), flat_vectors2.size() * sizeof(float), cudaMemcpyHostToDevice);
+    
+    // Launch kernel
+    int threadsPerBlock = 256;
+    int blocksPerGrid = (batch_size + threadsPerBlock - 1) / threadsPerBlock;
+    batch_distance_calculation<<<blocksPerGrid, threadsPerBlock>>>(
+        d_vec1, d_vec2, d_results, batch_size, 1, dim);
+    
+    // Copy results back
+    cudaMemcpy(results.data(), d_results, batch_size * sizeof(float), cudaMemcpyDeviceToHost);
+    
+    // Cleanup
+    cudaFree(d_vec1);
+    cudaFree(d_vec2);
+    cudaFree(d_results);
+    
+    return results;
+}
 
 } // namespace hnsw 
