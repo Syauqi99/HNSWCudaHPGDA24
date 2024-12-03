@@ -14,7 +14,8 @@ enable_language(CUDA)
 include_directories(${PROJECT_SOURCE_DIR}/include_1)
 
 # Add the executables
-add_executable(hnsw1 main_1.cu include_1/cuda_kernels.cu test_euclidean)
+add_executable(hnsw1 main_1.cu include_1/cuda_kernels.cu)
+add_executable(test_euclidean main_euclidean.cu include_1/cuda_kernels.cu)
 
 # Set CUDA specific flags
 set_target_properties(hnsw1 PROPERTIES
