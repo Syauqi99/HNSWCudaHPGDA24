@@ -7,17 +7,14 @@ namespace hnsw {
 
 __device__ float euclidean_distance_cuda(const float* a, const float* b, int dim);
 
-__global__ void batch_distance_calculation(
-    const float* queries, 
-    const float* dataset,
-    float* distances,
-    int n_queries,
-    int n_points,
+__global__ void batch_euclidean_distance(
+    const float* vectors,
+    const int* pairs,
+    float* results,
+    int num_pairs,
     int dim
 );
 
 float cuda_euclidean_distance(const std::vector<float>& p1, const std::vector<float>& p2);
-
-std::vector<float> batch_cuda_euclidean_distance(const std::vector<std::vector<float>>& vectors1, const std::vector<std::vector<float>>& vectors2, int batch_size);
 
 } // namespace hnsw
