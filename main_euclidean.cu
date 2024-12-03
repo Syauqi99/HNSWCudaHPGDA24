@@ -9,7 +9,6 @@
 using namespace std;
 using namespace utils;
 
-// Function to generate random vector data
 vector<float> generate_random_vector(int size) {
     random_device rd;
     mt19937 gen(rd());
@@ -23,12 +22,12 @@ vector<float> generate_random_vector(int size) {
 }
 
 int main() {
-    const int dim = 128;  // Dimension of vectors (same as SIFT)
-    const int num_tests = 100000;  // Increased number of tests
-    const int warmup_runs = 1000;  // Number of warmup runs
+    const int dim = 128;
+    const int num_tests = 100000;
+    const int batch_size = 1024;  // Process in batches
+    const int warmup_runs = 1000;
     
     cout << "Generating test data..." << endl;
-    // Generate test data
     vector<Data<float>> test_data;
     for (int i = 0; i < num_tests; i++) {
         Data<float> data;
@@ -48,22 +47,40 @@ int main() {
     // Test CPU version
     auto cpu_start = chrono::high_resolution_clock::now();
     vector<float> cpu_results(num_tests - 1);
+    #pragma omp parallel for
     for (int i = 0; i < num_tests - 1; i++) {
         cpu_results[i] = euclidean_distance(test_data[i], test_data[i + 1]);
     }
     auto cpu_end = chrono::high_resolution_clock::now();
     auto cpu_duration = chrono::duration_cast<chrono::microseconds>(cpu_end - cpu_start);
     
-    // Test CUDA version
+    // Test CUDA version with batching
     auto cuda_start = chrono::high_resolution_clock::now();
     vector<float> cuda_results(num_tests - 1);
-    for (int i = 0; i < num_tests - 1; i++) {
-        cuda_results[i] = to_cuda_euclidean_distance(test_data[i], test_data[i + 1]);
+    
+    for (int batch = 0; batch < (num_tests - 1); batch += batch_size) {
+        int current_batch_size = min(batch_size, num_tests - 1 - batch);
+        vector<vector<float>> batch_vectors1, batch_vectors2;
+        
+        // Prepare batch data
+        for (int i = 0; i < current_batch_size; i++) {
+            batch_vectors1.push_back(test_data[batch + i].x);
+            batch_vectors2.push_back(test_data[batch + i + 1].x);
+        }
+        
+        // Process batch
+        vector<float> batch_results = batch_cuda_euclidean_distance(
+            batch_vectors1, batch_vectors2, current_batch_size);
+            
+        // Store results
+        copy(batch_results.begin(), batch_results.end(), 
+             cuda_results.begin() + batch);
     }
+    
     auto cuda_end = chrono::high_resolution_clock::now();
     auto cuda_duration = chrono::duration_cast<chrono::microseconds>(cuda_end - cuda_start);
     
-    // Verify results match
+    // Print results and verification
     cout << "\nVerifying results..." << endl;
     double max_diff = 0.0;
     double avg_diff = 0.0;
@@ -74,7 +91,6 @@ int main() {
     }
     avg_diff /= (num_tests - 1);
     
-    // Print detailed results
     cout << fixed << setprecision(6);
     cout << "\nAccuracy Comparison:" << endl;
     cout << "Maximum difference: " << max_diff << endl;
@@ -85,10 +101,6 @@ int main() {
     cout << "CPU time:  " << cpu_duration.count() / 1000.0 << " ms" << endl;
     cout << "CUDA time: " << cuda_duration.count() / 1000.0 << " ms" << endl;
     cout << "Speedup:   " << (float)cpu_duration.count() / cuda_duration.count() << "x" << endl;
-    
-    cout << "\nPer-Operation Time:" << endl;
-    cout << "CPU:  " << cpu_duration.count() / (double)(num_tests - 1) << " us/op" << endl;
-    cout << "CUDA: " << cuda_duration.count() / (double)(num_tests - 1) << " us/op" << endl;
     
     return 0;
 } 

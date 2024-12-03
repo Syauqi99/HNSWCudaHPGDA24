@@ -5,6 +5,7 @@ using namespace std;
 
 namespace hnsw {
 
+// CUDA kernel declarations
 __device__ float euclidean_distance_cuda(const float* a, const float* b, int dim) {
     __shared__ float shared_sum[256];  // Using shared memory for reduction
     int tid = threadIdx.x;
@@ -32,65 +33,61 @@ __device__ float euclidean_distance_cuda(const float* a, const float* b, int dim
 
 class AsyncDistanceCalculator {
 private:
-    float *d_vec1 = nullptr, *d_vec2 = nullptr;
-    float *d_result = nullptr;
-    float *h_result = nullptr;  // Pinned memory for async transfers
+    float *d_vectors = nullptr;  // Combined buffer for all vectors
+    float *d_distances = nullptr;
+    float *h_distances = nullptr;  // Pinned memory
     cudaStream_t stream;
-    int current_dim = 0;
+    int current_capacity = 0;
+    int vector_dim = 0;
 
 public:
     AsyncDistanceCalculator() {
         cudaStreamCreate(&stream);
-        cudaMallocHost(&h_result, sizeof(float));  // Allocate pinned memory
+        cudaMallocHost(&h_distances, 1024 * sizeof(float));  // Pre-allocate for batch processing
     }
 
     ~AsyncDistanceCalculator() {
-        if (d_vec1) cudaFree(d_vec1);
-        if (d_vec2) cudaFree(d_vec2);
-        if (d_result) cudaFree(d_result);
-        if (h_result) cudaFreeHost(h_result);
+        if (d_vectors) cudaFree(d_vectors);
+        if (d_distances) cudaFree(d_distances);
+        if (h_distances) cudaFreeHost(h_distances);
         cudaStreamDestroy(stream);
     }
 
-    void ensure_device_memory(int dim) {
-        if (dim != current_dim) {
-            // Free old memory if exists
-            if (d_vec1) cudaFree(d_vec1);
-            if (d_vec2) cudaFree(d_vec2);
-            if (d_result) cudaFree(d_result);
-
-            // Allocate new memory
-            cudaMalloc(&d_vec1, dim * sizeof(float));
-            cudaMalloc(&d_vec2, dim * sizeof(float));
-            cudaMalloc(&d_result, sizeof(float));
-            current_dim = dim;
+    void ensure_device_memory(int batch_size, int dim) {
+        int required_capacity = batch_size * 2 * dim;  // Space for pairs of vectors
+        if (required_capacity > current_capacity || dim != vector_dim) {
+            if (d_vectors) cudaFree(d_vectors);
+            if (d_distances) cudaFree(d_distances);
+            
+            cudaMalloc(&d_vectors, required_capacity * sizeof(float));
+            cudaMalloc(&d_distances, batch_size * sizeof(float));
+            
+            current_capacity = required_capacity;
+            vector_dim = dim;
         }
     }
 
     float calculate_distance(const vector<float>& p1, const vector<float>& p2) {
         int dim = p1.size();
-        ensure_device_memory(dim);
+        ensure_device_memory(1, dim);
 
-        // Async memory transfers to device
-        cudaMemcpyAsync(d_vec1, p1.data(), dim * sizeof(float), 
+        // Copy both vectors in one transfer
+        cudaMemcpyAsync(d_vectors, p1.data(), dim * sizeof(float), 
                        cudaMemcpyHostToDevice, stream);
-        cudaMemcpyAsync(d_vec2, p2.data(), dim * sizeof(float), 
+        cudaMemcpyAsync(d_vectors + dim, p2.data(), dim * sizeof(float), 
                        cudaMemcpyHostToDevice, stream);
 
-        // Launch kernel
+        // Launch kernel with optimal configuration
         int threadsPerBlock = 256;
-        int blocksPerGrid = 1;
-        batch_distance_calculation<<<blocksPerGrid, threadsPerBlock, 0, stream>>>(
-            d_vec1, d_vec2, d_result, 1, 1, dim);
+        batch_distance_calculation<<<1, threadsPerBlock, 0, stream>>>(
+            d_vectors, d_vectors + dim, d_distances, 1, 1, dim);
 
-        // Async copy result back to pinned memory
-        cudaMemcpyAsync(h_result, d_result, sizeof(float), 
+        // Async copy result
+        cudaMemcpyAsync(h_distances, d_distances, sizeof(float), 
                        cudaMemcpyDeviceToHost, stream);
-        
-        // Wait for all operations in stream to complete
         cudaStreamSynchronize(stream);
         
-        return *h_result;
+        return h_distances[0];
     }
 };
 
@@ -100,5 +97,7 @@ static AsyncDistanceCalculator calculator;
 float cuda_euclidean_distance(const vector<float>& p1, const vector<float>& p2) {
     return calculator.calculate_distance(p1, p2);
 }
+
+vector<float> batch_cuda_euclidean_distance(const vector<vector<float>>& vectors1, const vector<vector<float>>& vectors2, int batch_size);
 
 } // namespace hnsw 
