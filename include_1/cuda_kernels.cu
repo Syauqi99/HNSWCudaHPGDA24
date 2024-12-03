@@ -98,6 +98,6 @@ float cuda_euclidean_distance(const vector<float>& p1, const vector<float>& p2) 
     return calculator.calculate_distance(p1, p2);
 }
 
-vector<float> batch_cuda_euclidean_distance(const vector<vector<float>>& vectors1, const vector<vector<float>>& vectors2, int batch_size);
+std::vector<float> batch_cuda_euclidean_distance(const std::vector<std::vector<float>>& vectors1, const std::vector<vector<float>>& vectors2, int batch_size);
 
 } // namespace hnsw 
