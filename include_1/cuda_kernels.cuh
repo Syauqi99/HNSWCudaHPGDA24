@@ -1,29 +1,55 @@
-#pragma once
+#ifndef CUDA_KERNELS_CUH
+#define CUDA_KERNELS_CUH
 
 #include <cuda_runtime.h>
+#include <thrust/device_vector.h>
+#include <thrust/copy.h>
 #include <vector>
 
 namespace hnsw {
 
-__device__ float euclidean_distance_cuda(const float* a, const float* b, int dim);
+struct SearchLayerCUDAContext {
+    thrust::device_vector<float> d_query_vector;
+    thrust::device_vector<float> d_candidate_vectors;
+    thrust::device_vector<float> d_distances;
+    thrust::device_vector<int> d_candidate_ids;
+    
+    vector<float> h_distances;
+    vector<int> h_candidate_ids;
+    
+    explicit SearchLayerCUDAContext(size_t vector_dim, size_t batch_size = 1024) {
+        d_query_vector.resize(vector_dim);
+        d_candidate_vectors.resize(vector_dim * batch_size);
+        d_distances.resize(batch_size);
+        d_candidate_ids.resize(batch_size);
+        h_distances.resize(batch_size);
+        h_candidate_ids.resize(batch_size);
+    }
+};
 
-__global__ void batch_distance_calculation(
-    const float* queries, 
-    const float* dataset,
+// CUDA kernel declarations
+__global__ void compute_distances_kernel(
+    const float* query_vector,
+    const float* candidate_vectors,
     float* distances,
-    int n_queries,
-    int n_points,
-    int dim
+    const int vector_dim,
+    const int n_candidates
 );
 
-// Single vector distance calculation
-float cuda_euclidean_distance(const std::vector<float>& p1, const std::vector<float>& p2);
-
-// Add batch processing function declaration with matching name
-std::vector<float> batch_cuda_euclidean_distance(
-    const std::vector<std::vector<float>>& vectors1,
-    const std::vector<std::vector<float>>& vectors2,
+// Helper functions
+void batch_compute_distances(
+    SearchLayerCUDAContext& ctx,
+    const vector<float>& query_vector,
+    const vector<const vector<float>*>& candidate_vectors,
+    vector<float>& distances,
     int batch_size
 );
 
+// Existing declarations
+__device__ float euclidean_distance_cuda(const float* a, const float* b, int dim);
+__global__ void batch_distance_calculation(const float* queries, const float* dataset,
+                                         float* distances, int n_queries, int n_points, int dim);
+
 } // namespace hnsw
+
+#endif // CUDA_KERNELS_CUH

@@ -53,120 +53,60 @@ __global__ void batch_distance_calculation(
     }
 }
 
-class AsyncDistanceCalculator {
-private:
-    float *d_vectors = nullptr;  // Combined buffer for all vectors
-    float *d_distances = nullptr;
-    float *h_distances = nullptr;  // Pinned memory
-    cudaStream_t stream;
-    int current_capacity = 0;
-    int vector_dim = 0;
+__global__ void compute_distances_kernel(
+    const float* query_vector,
+    const float* candidate_vectors,
+    float* distances,
+    const int vector_dim,
+    const int n_candidates
+) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= n_candidates) return;
 
-public:
-    AsyncDistanceCalculator() {
-        cudaStreamCreate(&stream);
-        cudaMallocHost(&h_distances, 1024 * sizeof(float));  // Pre-allocate for batch processing
+    float dist = 0.0f;
+    const float* candidate = candidate_vectors + idx * vector_dim;
+    
+    for (int i = 0; i < vector_dim; i++) {
+        float diff = query_vector[i] - candidate[i];
+        dist += diff * diff;
     }
-
-    ~AsyncDistanceCalculator() {
-        if (d_vectors) cudaFree(d_vectors);
-        if (d_distances) cudaFree(d_distances);
-        if (h_distances) cudaFreeHost(h_distances);
-        cudaStreamDestroy(stream);
-    }
-
-    void ensure_device_memory(int batch_size, int dim) {
-        int required_capacity = batch_size * 2 * dim;  // Space for pairs of vectors
-        if (required_capacity > current_capacity || dim != vector_dim) {
-            if (d_vectors) cudaFree(d_vectors);
-            if (d_distances) cudaFree(d_distances);
-            
-            cudaMalloc(&d_vectors, required_capacity * sizeof(float));
-            cudaMalloc(&d_distances, batch_size * sizeof(float));
-            
-            current_capacity = required_capacity;
-            vector_dim = dim;
-        }
-    }
-
-    float calculate_distance(const vector<float>& p1, const vector<float>& p2) {
-        int dim = p1.size();
-        ensure_device_memory(1, dim);
-
-        // Copy both vectors in one transfer
-        cudaMemcpyAsync(d_vectors, p1.data(), dim * sizeof(float), 
-                       cudaMemcpyHostToDevice, stream);
-        cudaMemcpyAsync(d_vectors + dim, p2.data(), dim * sizeof(float), 
-                       cudaMemcpyHostToDevice, stream);
-
-        // Launch kernel with optimal configuration
-        int threadsPerBlock = 256;
-        batch_distance_calculation<<<1, threadsPerBlock, 0, stream>>>(
-            d_vectors, d_vectors + dim, d_distances, 1, 1, dim);
-
-        // Async copy result
-        cudaMemcpyAsync(h_distances, d_distances, sizeof(float), 
-                       cudaMemcpyDeviceToHost, stream);
-        cudaStreamSynchronize(stream);
-        
-        return h_distances[0];
-    }
-};
-
-// Static instance for reuse
-static AsyncDistanceCalculator calculator;
-
-float cuda_euclidean_distance(const vector<float>& p1, const vector<float>& p2) {
-    return calculator.calculate_distance(p1, p2);
+    
+    distances[idx] = sqrt(dist);
 }
 
-vector<float> batch_cuda_euclidean_distance(
-    const vector<vector<float>>& vectors1,
-    const vector<vector<float>>& vectors2,
+void batch_compute_distances(
+    SearchLayerCUDAContext& ctx,
+    const vector<float>& query_vector,
+    const vector<const vector<float>*>& candidate_vectors,
+    vector<float>& distances,
     int batch_size
 ) {
-    if (vectors1.empty() || vectors2.empty() || vectors1.size() != vectors2.size()) {
-        return vector<float>();
+    // Copy query vector to GPU (if not already done)
+    thrust::copy(query_vector.begin(), query_vector.end(), ctx.d_query_vector.begin());
+
+    // Prepare batch data for GPU
+    for (size_t i = 0; i < candidate_vectors.size(); i++) {
+        thrust::copy(candidate_vectors[i]->begin(),
+                    candidate_vectors[i]->end(),
+                    ctx.d_candidate_vectors.begin() + i * query_vector.size());
     }
 
-    int dim = vectors1[0].size();
-    vector<float> results(batch_size);
-    
-    // Flatten input vectors
-    vector<float> flat_vectors1, flat_vectors2;
-    flat_vectors1.reserve(batch_size * dim);
-    flat_vectors2.reserve(batch_size * dim);
-    
-    for (int i = 0; i < batch_size; i++) {
-        flat_vectors1.insert(flat_vectors1.end(), vectors1[i].begin(), vectors1[i].end());
-        flat_vectors2.insert(flat_vectors2.end(), vectors2[i].begin(), vectors2[i].end());
-    }
-    
-    // Allocate device memory
-    float *d_vec1, *d_vec2, *d_results;
-    cudaMalloc(&d_vec1, flat_vectors1.size() * sizeof(float));
-    cudaMalloc(&d_vec2, flat_vectors2.size() * sizeof(float));
-    cudaMalloc(&d_results, batch_size * sizeof(float));
-    
-    // Copy data to device
-    cudaMemcpy(d_vec1, flat_vectors1.data(), flat_vectors1.size() * sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_vec2, flat_vectors2.data(), flat_vectors2.size() * sizeof(float), cudaMemcpyHostToDevice);
-    
     // Launch kernel
     int threadsPerBlock = 256;
-    int blocksPerGrid = (batch_size + threadsPerBlock - 1) / threadsPerBlock;
-    batch_distance_calculation<<<blocksPerGrid, threadsPerBlock>>>(
-        d_vec1, d_vec2, d_results, batch_size, 1, dim);
+    int numBlocks = (candidate_vectors.size() + threadsPerBlock - 1) / threadsPerBlock;
     
+    compute_distances_kernel<<<numBlocks, threadsPerBlock>>>(
+        thrust::raw_pointer_cast(ctx.d_query_vector.data()),
+        thrust::raw_pointer_cast(ctx.d_candidate_vectors.data()),
+        thrust::raw_pointer_cast(ctx.d_distances.data()),
+        query_vector.size(),
+        candidate_vectors.size()
+    );
+
     // Copy results back
-    cudaMemcpy(results.data(), d_results, batch_size * sizeof(float), cudaMemcpyDeviceToHost);
-    
-    // Cleanup
-    cudaFree(d_vec1);
-    cudaFree(d_vec2);
-    cudaFree(d_results);
-    
-    return results;
+    thrust::copy_n(ctx.d_distances.begin(), 
+                  candidate_vectors.size(),
+                  distances.begin());
 }
 
 } // namespace hnsw 
