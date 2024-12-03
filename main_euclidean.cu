@@ -8,6 +8,7 @@
 
 using namespace std;
 using namespace utils;
+using namespace hnsw;
 
 vector<float> generate_random_vector(int size) {
     random_device rd;
