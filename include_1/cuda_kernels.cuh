@@ -18,6 +18,6 @@ __global__ void batch_distance_calculation(
 
 float cuda_euclidean_distance(const std::vector<float>& p1, const std::vector<float>& p2);
 
-vector<float> batch_cuda_euclidean_distance(const vector<vector<float>>& vectors1, const vector<vector<float>>& vectors2, int batch_size);
+std::vector<float> batch_cuda_euclidean_distance(const std::vector<std::vector<float>>& vectors1, const std::vector<std::vector<float>>& vectors2, int batch_size);
 
 } // namespace hnsw
