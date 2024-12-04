@@ -14,8 +14,8 @@ struct SearchLayerCUDAContext {
     thrust::device_vector<float> d_distances;
     thrust::device_vector<int> d_candidate_ids;
     
-    vector<float> h_distances;
-    vector<int> h_candidate_ids;
+    std::vector<float> h_distances;
+    std::vector<int> h_candidate_ids;
     
     explicit SearchLayerCUDAContext(size_t vector_dim, size_t batch_size = 1024) {
         d_query_vector.resize(vector_dim);
@@ -39,9 +39,9 @@ __global__ void compute_distances_kernel(
 // Helper functions
 void batch_compute_distances(
     SearchLayerCUDAContext& ctx,
-    const vector<float>& query_vector,
-    const vector<const vector<float>*>& candidate_vectors,
-    vector<float>& distances,
+    const std::vector<float>& query_vector,
+    const std::vector<const std::vector<float>*>& candidate_vectors,
+    std::vector<float>& distances,
     int batch_size
 );
 

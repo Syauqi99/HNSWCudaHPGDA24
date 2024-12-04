@@ -76,9 +76,9 @@ __global__ void compute_distances_kernel(
 
 void batch_compute_distances(
     SearchLayerCUDAContext& ctx,
-    const vector<float>& query_vector,
-    const vector<const vector<float>*>& candidate_vectors,
-    vector<float>& distances,
+    const std::vector<float>& query_vector,
+    const std::vector<const std::vector<float>*>& candidate_vectors,
+    std::vector<float>& distances,
     int batch_size
 ) {
     // Copy query vector to GPU (if not already done)
