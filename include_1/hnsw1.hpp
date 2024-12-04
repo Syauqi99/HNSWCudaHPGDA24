@@ -4,7 +4,6 @@
 #include <queue>
 #include <utils1.hpp>
 #include <random>
-#include "cuda_kernels.cuh"
 
 using namespace std;
 using namespace utils;
@@ -77,7 +76,7 @@ namespace hnsw {
                 ef_construction(ef_construction),
                 extend_candidates(extend_candidates),
                 keep_pruned_connections(keep_pruned_connections),
-                calc_dist(utils::to_cuda_euclidean_distance<float>),
+                calc_dist(euclidean_distance<float>),
                 engine(42), unif_dist(0.0, 1.0) {}
 
         const Node& get_enter_node() const { return layers.back()[enter_node_id]; }
@@ -88,74 +87,39 @@ namespace hnsw {
 
         auto search_layer(const Data<>& query, int start_node_id, int ef, int l_c) {
             auto result = SearchResult();
-            const int BATCH_SIZE = 1024;
-            
-            // Initialize CUDA context if not already done
-            static SearchLayerCUDAContext cuda_ctx(query.vector.size(), BATCH_SIZE);
-            
+
             vector<bool> visited(dataset.size());
             visited[start_node_id] = true;
 
             priority_queue<Neighbor, vector<Neighbor>, CompGreater> candidates;
             priority_queue<Neighbor, vector<Neighbor>, CompLess> top_candidates;
 
-            // Initial distance computation for start node
             const auto& start_node = layers[l_c][start_node_id];
-            vector<const vector<float>*> initial_batch = {&start_node.data.vector};
-            vector<float> initial_distances(1);
-            
-            batch_compute_distances(cuda_ctx, query.vector, initial_batch, 
-                                  initial_distances, 1);
-            
-            float dist_from_en = initial_distances[0];
+            const auto dist_from_en = calc_dist(query, start_node.data);
+
             candidates.emplace(dist_from_en, start_node_id);
             top_candidates.emplace(dist_from_en, start_node_id);
 
             while (!candidates.empty()) {
-                vector<int> batch_candidate_ids;
-                vector<const vector<float>*> batch_candidates;
-                
-                while (!candidates.empty() && batch_candidate_ids.size() < BATCH_SIZE) {
-                    auto nearest_candidate = candidates.top();
-                    candidates.pop();
-                    
-                    if (nearest_candidate.dist > top_candidates.top().dist) {
-                        candidates = priority_queue<Neighbor, vector<Neighbor>, CompGreater>();
-                        break;
-                    }
+                const auto nearest_candidate = candidates.top();
+                const auto& nearest_candidate_node = layers[l_c][nearest_candidate.id];
+                candidates.pop();
+                // i changed someting
+                if (nearest_candidate.dist > top_candidates.top().dist) break;
 
-                    const auto& nearest_node = layers[l_c][nearest_candidate.id];
-                    
-                    for (const auto& neighbor : nearest_node.neighbors) {
-                        if (!visited[neighbor.id]) {
-                            batch_candidate_ids.push_back(neighbor.id);
-                            batch_candidates.push_back(&layers[l_c][neighbor.id].data.vector);
-                            visited[neighbor.id] = true;
-                            
-                            if (batch_candidate_ids.size() == BATCH_SIZE) break;
-                        }
-                    }
-                }
+                for (const auto neighbor : nearest_candidate_node.neighbors) {
+                    if (visited[neighbor.id]) continue;
+                    visited[neighbor.id] = true;
 
-                if (batch_candidate_ids.empty()) break;
+                    const auto& neighbor_node = layers[l_c][neighbor.id];
+                    const auto dist_from_neighbor = calc_dist(query, neighbor_node.data);
 
-                // Compute distances for batch
-                vector<float> batch_distances(batch_candidates.size());
-                batch_compute_distances(cuda_ctx, query.vector, batch_candidates, 
-                                      batch_distances, batch_candidates.size());
+                    if (dist_from_neighbor < top_candidates.top().dist ||
+                        top_candidates.size() < ef) {
+                        candidates.emplace(dist_from_neighbor, neighbor.id);
+                        top_candidates.emplace(dist_from_neighbor, neighbor.id);
 
-                // Process results
-                for (size_t i = 0; i < batch_candidates.size(); i++) {
-                    float dist = batch_distances[i];
-                    int candidate_id = batch_candidate_ids[i];
-
-                    if (dist < top_candidates.top().dist || top_candidates.size() < ef) {
-                        candidates.emplace(dist, candidate_id);
-                        top_candidates.emplace(dist, candidate_id);
-
-                        if (top_candidates.size() > ef) {
-                            top_candidates.pop();
-                        }
+                        if (top_candidates.size() > ef) top_candidates.pop();
                     }
                 }
             }
@@ -166,6 +130,7 @@ namespace hnsw {
             }
 
             reverse(result.result.begin(), result.result.end());
+
             return result;
         }
 

@@ -1,117 +1,118 @@
-#include <cuda_runtime.h>
-#include <thrust/device_vector.h>
-#include "cuda_kernels.cuh"
 #include "hnsw1.hpp"
-#include <random>
+#include <cuda_runtime.h>
 #include <chrono>
-#include <iostream>
+#include <random>
 
+using namespace std;
 using namespace hnsw;
-using namespace utils;
 
-// Helper function to generate random vectors
-vector<float> generate_random_vector(int dim) {
-    random_device rd;
-    mt19937 gen(rd());
-    uniform_real_distribution<float> dis(-1.0, 1.0);
-    
-    vector<float> vec(dim);
-    for (auto& v : vec) {
-        v = dis(gen);
+// CUDA kernel for parallel distance computation
+__global__ void compute_distances_kernel(float* query, float* points, float* distances, 
+                                       int num_points, int num_dimensions) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < num_points) {
+        float dist = 0.0f;
+        for (int d = 0; d < num_dimensions; d++) {
+            float diff = query[d] - points[idx * num_dimensions + d];
+            dist += diff * diff;
+        }
+        distances[idx] = sqrt(dist);
     }
-    return vec;
-}
-
-// Helper function to generate test dataset
-Dataset<float> generate_test_dataset(int num_points, int dim) {
-    Dataset<float> dataset;
-    for (int i = 0; i < num_points; i++) {
-        Data<float> data;
-        data.id = i;
-        data.x = generate_random_vector(dim);
-        dataset.push_back(data);
-    }
-    return dataset;
 }
 
 int main() {
-    const int dim = 128;
-    const int num_points = 1000;
-    const int num_queries = 100;
-    const int ef = 64;
-    const int m = 16;
+    // Parameters
+    const int NUM_POINTS = 10000;
+    const int NUM_DIMENSIONS = 128;
+    const int K = 10;
+    const int EF = 64;
+    const int NUM_RUNS = 100;
+    const int BLOCK_SIZE = 256;
     
-    cout << "Initializing test environment..." << endl;
+    // Generate random dataset
+    Dataset<> dataset;
+    mt19937 rng(42);
+    uniform_real_distribution<float> dist(-1.0, 1.0);
     
-    // Generate dataset and build index
-    cout << "Generating dataset with " << num_points << " points..." << endl;
-    auto dataset = generate_test_dataset(num_points, dim);
-    
-    cout << "Building HNSW index..." << endl;
-    auto index = HNSW(m, ef);
-    index.build(dataset);
-
-    // Initialize CUDA context
-    SearchLayerCUDAContext cuda_ctx(dim);
-    
-    // Generate query points
-    cout << "Generating " << num_queries << " query points..." << endl;
-    vector<Data<float>> queries;
-    for (int i = 0; i < num_queries; i++) {
-        Data<float> query;
-        query.id = num_points + i;
-        query.x = generate_random_vector(dim);
-        queries.push_back(query);
+    cout << "Generating random dataset..." << endl;
+    for (int i = 0; i < NUM_POINTS; i++) {
+        vector<float> features(NUM_DIMENSIONS);
+        for (float& f : features) {
+            f = dist(rng);
+        }
+        dataset.emplace_back(Data<>(i, features));
     }
 
-    // Warmup
-    cout << "Performing warmup..." << endl;
-    auto warmup_result = index.search_layer(queries[0], 0, ef, 0);
+    // Build HNSW index
+    HNSW hnsw(16, 64);  // M=16, ef_construction=64
+    cout << "Building index..." << endl;
+    hnsw.build(dataset);
+
+    // Generate random query
+    vector<float> query_features(NUM_DIMENSIONS);
+    for (float& f : query_features) {
+        f = dist(rng);
+    }
+    Data<> query(-1, query_features);
+
+    // Prepare GPU memory
+    float *d_query, *d_points, *d_distances;
+    cudaMalloc(&d_query, NUM_DIMENSIONS * sizeof(float));
+    cudaMalloc(&d_points, NUM_POINTS * NUM_DIMENSIONS * sizeof(float));
+    cudaMalloc(&d_distances, NUM_POINTS * sizeof(float));
+
+    // Copy query to GPU
+    cudaMemcpy(d_query, query_features.data(), NUM_DIMENSIONS * sizeof(float), 
+               cudaMemcpyHostToDevice);
+
+    // Copy dataset points to GPU
+    vector<float> points_data;
+    points_data.reserve(NUM_POINTS * NUM_DIMENSIONS);
+    for (const auto& data : dataset) {
+        points_data.insert(points_data.end(), data.features.begin(), data.features.end());
+    }
+    cudaMemcpy(d_points, points_data.data(), 
+               NUM_POINTS * NUM_DIMENSIONS * sizeof(float), 
+               cudaMemcpyHostToDevice);
 
     // Benchmark CPU version
-    cout << "\nBenchmarking CPU version..." << endl;
-    vector<double> cpu_times;
-    for (const auto& query : queries) {
-        auto start = chrono::high_resolution_clock::now();
-        auto result = index.search_layer(query, 0, ef, 0);
-        auto end = chrono::high_resolution_clock::now();
-        auto duration = chrono::duration_cast<microseconds>(end - start).count();
-        cpu_times.push_back(duration);
+    cout << "\nRunning CPU benchmark..." << endl;
+    auto start_cpu = chrono::high_resolution_clock::now();
+    for(int i = 0; i < NUM_RUNS; i++) {
+        auto result_cpu = hnsw.search_layer(query, hnsw.enter_node_id, EF, 0);
     }
+    auto end_cpu = chrono::high_resolution_clock::now();
+    auto cpu_time = chrono::duration_cast<chrono::microseconds>(end_cpu - start_cpu).count() / NUM_RUNS;
 
-    // Benchmark CUDA version
-    cout << "Benchmarking CUDA version..." << endl;
-    vector<double> cuda_times;
-    for (const auto& query : queries) {
-        auto start = chrono::high_resolution_clock::now();
-        auto result = index.search_layer(query, 0, ef, 0);  // Using optimized version
-        auto end = chrono::high_resolution_clock::now();
-        auto duration = chrono::duration_cast<microseconds>(end - start).count();
-        cuda_times.push_back(duration);
-    }
-
-    // Calculate statistics
-    auto cpu_avg = accumulate(cpu_times.begin(), cpu_times.end(), 0.0) / num_queries;
-    auto cuda_avg = accumulate(cuda_times.begin(), cuda_times.end(), 0.0) / num_queries;
+    // Benchmark GPU version
+    cout << "Running GPU benchmark..." << endl;
+    auto start_gpu = chrono::high_resolution_clock::now();
     
-    auto cpu_minmax = minmax_element(cpu_times.begin(), cpu_times.end());
-    auto cuda_minmax = minmax_element(cuda_times.begin(), cuda_times.end());
+    for(int i = 0; i < NUM_RUNS; i++) {
+        // Launch kernel
+        int num_blocks = (NUM_POINTS + BLOCK_SIZE - 1) / BLOCK_SIZE;
+        compute_distances_kernel<<<num_blocks, BLOCK_SIZE>>>(
+            d_query, d_points, d_distances, NUM_POINTS, NUM_DIMENSIONS
+        );
+        cudaDeviceSynchronize();
+    }
+    
+    auto end_gpu = chrono::high_resolution_clock::now();
+    auto gpu_time = chrono::duration_cast<chrono::microseconds>(end_gpu - start_gpu).count() / NUM_RUNS;
 
     // Print results
-    cout << "\nSearch Layer Performance Results:" << endl;
-    cout << "--------------------------------" << endl;
-    cout << "Number of queries: " << num_queries << endl;
-    cout << "Dataset size: " << num_points << " points" << endl;
-    cout << "Vector dimension: " << dim << endl;
-    cout << "\nCPU Performance:" << endl;
-    cout << "  Average time: " << cpu_avg << " microseconds" << endl;
-    cout << "  Min time: " << *cpu_minmax.first << " microseconds" << endl;
-    cout << "  Max time: " << *cpu_minmax.second << " microseconds" << endl;
-    cout << "\nCUDA Performance:" << endl;
-    cout << "  Average time: " << cuda_avg << " microseconds" << endl;
-    cout << "  Min time: " << *cuda_minmax.first << " microseconds" << endl;
-    cout << "  Max time: " << *cuda_minmax.second << " microseconds" << endl;
-    cout << "\nSpeedup: " << cpu_avg / cuda_avg << "x" << endl;
+    cout << "\nBenchmark Results:" << endl;
+    cout << "Dataset size: " << NUM_POINTS << " points" << endl;
+    cout << "Dimensions: " << NUM_DIMENSIONS << endl;
+    cout << "Number of runs: " << NUM_RUNS << endl;
+    cout << "Average CPU time: " << cpu_time << " microseconds" << endl;
+    cout << "Average GPU time: " << gpu_time << " microseconds" << endl;
+    cout << "Speedup: " << static_cast<float>(cpu_time) / gpu_time << "x" << endl;
+
+    // Cleanup
+    cudaFree(d_query);
+    cudaFree(d_points);
+    cudaFree(d_distances);
 
     return 0;
 } 
