@@ -2,131 +2,100 @@
 #include <stdio.h>
 #include <assert.h>
 #include <chrono>
-#include <iostream>  // Added this header for std::cout
+#include <iostream>
 
 __global__ void cuda_euclidean_distance(float *a, float *b, float *result, int N) {
-    // Declare shared memory array - visible to all threads in the same block
-    // Size must be specified when kernel is launched
     extern __shared__ float shared_data[];
 
-    // Calculate global thread ID and stride
-    int threadId = threadIdx.x + blockIdx.x * blockDim.x;  // Global thread ID
-    int gridStride = blockDim.x * gridDim.x;               // Total number of threads
-    int localId = threadIdx.x;                             // Local thread ID within the block
+    int threadId = threadIdx.x + blockIdx.x * blockDim.x;
+    int gridStride = blockDim.x * gridDim.x;
+    int localId = threadIdx.x;
 
-    // Initialize local sum for this thread
     float sum = 0.0f;
 
-    // Each thread processes multiple elements with grid-stride loop
-    // This allows handling arrays larger than total number of threads
     for (int i = threadId; i < N; i += gridStride) {
-        float diff = a[i] - b[i];        // Calculate difference
-        sum += diff * diff;              // Add squared difference to local sum
+        float diff = a[i] - b[i];
+        sum += diff * diff;
     }
 
-    // Store this thread's sum in shared memory
     shared_data[localId] = sum;
-    
-    // Ensure all threads in block have written to shared memory
     __syncthreads();
 
-    // Parallel reduction in shared memory
-    // This loop reduces the partial sums in shared memory to a single sum per block
     for (int stride = blockDim.x / 2; stride > 0; stride /= 2) {
         if (localId < stride) {
-            // Each thread adds a value from the second half to the first half
             shared_data[localId] += shared_data[localId + stride];
         }
-        // Ensure all threads have finished reading shared memory before next iteration
         __syncthreads();
     }
 
-    // Only thread 0 in each block writes the final result
     if (localId == 0) {
-        // Atomically add this block's sum to the global result
-        // atomicAdd is necessary because multiple blocks may write simultaneously
         atomicAdd(result, shared_data[0]);
     }
 }
 
 int main() {
-  int N = 1000000;  // Size of arrays
+    int N = 1000000;  // Size of arrays
+    size_t size = N * sizeof(float);
+    
+    // Allocate host memory
+    float *h_a = (float*)malloc(size);
+    float *h_b = (float*)malloc(size);
+    float *h_result = (float*)malloc(sizeof(float));
 
-  
-  // Allocate host memory
-  h_a = (float*)malloc(N * sizeof(float));
-  h_b = (float*)malloc(N * sizeof(float));
-  h_result = (float*)malloc(sizeof(float));
+    // Initialize host arrays
+    for (int i = 0; i < N; i++) {
+        h_a[i] = static_cast<float>(i);
+        h_b[i] = static_cast<float>(i + 1);
+    }
+    *h_result = 0.0f;
 
-  // Initialize host arrays
-  for (int i = 0; i < N; i++) {
-      h_a[i] = static_cast<float>(i);
-      h_b[i] = static_cast<float>(i + 1);
-  }
-  *h_result = 0.0f;
+    // Start timing
+    auto start = std::chrono::high_resolution_clock::now();
 
+    // Allocate device memory
+    float *d_a, *d_b, *d_result;
+    cudaMalloc(&d_a, size);
+    cudaMalloc(&d_b, size);
+    cudaMalloc(&d_result, sizeof(float));
 
+    // Copy data to device
+    cudaMemcpy(d_a, h_a, size, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_b, h_b, size, cudaMemcpyHostToDevice);
+    cudaMemset(d_result, 0, sizeof(float));
 
-  // Start timing
-  auto start = std::chrono::high_resolution_clock::now();
-  // Host code to launch the kernel
-  float *d_a, *d_b, *d_result;
-  size_t size = N * sizeof(float);
+    // Get device properties
+    int deviceId;
+    cudaDeviceProp props;
+    cudaGetDevice(&deviceId);
+    cudaGetDeviceProperties(&props, deviceId);
 
-  // Allocate device memory
-  cudaMalloc(&d_a, size);
-  cudaMalloc(&d_b, size);
-  cudaMalloc(&d_result, sizeof(float));
+    // Calculate optimal launch parameters
+    int threadsPerBlock = 256;  // Or use props.maxThreadsPerBlock
+    int numberOfBlocks = (N + threadsPerBlock - 1) / threadsPerBlock;
+    numberOfBlocks = min(numberOfBlocks, props.maxGridSize[0]);
 
-  if (checkCuda(cudaMallocManaged(&d_a, size)) != cudaSuccess){
-    exit(1);
-  }
+    // Launch kernel
+    cuda_euclidean_distance<<<numberOfBlocks, threadsPerBlock, threadsPerBlock * sizeof(float)>>>(
+        d_a, d_b, d_result, N
+    );
 
-  if (checkCuda(cudaMallocManaged(&d_b, size)) != cudaSuccess){
-    exit(1);
-  }
+    // Copy result back to host
+    cudaMemcpy(h_result, d_result, sizeof(float), cudaMemcpyDeviceToHost);
 
-  if (checkCuda(cudaMallocManaged(&d_c, size)) != cudaSuccess){
-    exit(1);
-  }
+    // End timing
+    auto end = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
 
-  cudaGetDevice(&deviceId);
-  cudaGetDeviceProperties(&props, deviceId);
+    std::cout << "Result: " << sqrt(*h_result) << std::endl;
+    std::cout << "Time taken: " << duration << " microseconds" << std::endl;
 
-  threadsPerBlock = props.maxThreadsPerBlock;
-  numberOfBlocks = props.multiProcessorCount * 2;
+    // Free memory
+    cudaFree(d_a);
+    cudaFree(d_b);
+    cudaFree(d_result);
+    free(h_a);
+    free(h_b);
+    free(h_result);
 
-  cudaMemPrefetchAsync(d_a, size, deviceId);
-  cudaMemPrefetchAsync(d_b, size, deviceId);
-
-  // Initialize result to 0
-  cudaMemset(d_result, 0, sizeof(float));
-
-  cudaError_t addVectorsErr;
-  cudaError_t asyncErr;
-
-  // Launch kernel with shared memory size = blockSize * sizeof(float)
-  cuda_euclidean_distance<<<numberOfBlocks, threadsPerBlock>>>(
-      d_a, d_b, d_result, N
-  );
-
-  addVectorsErr = cudaGetLastError();
-  if(addVectorsErr != cudaSuccess) printf("Error: %s\n", cudaGetErrorString(addVectorsErr));
-
-  asyncErr = cudaDeviceSynchronize();
-  if(asyncErr != cudaSuccess) printf("Error: %s\n", cudaGetErrorString(asyncErr));
-
-  // End timing
-  auto end = std::chrono::high_resolution_clock::now();
-  auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
-
-  std::cout << "Time taken: " << duration << " microseconds" << std::endl;
-
-  // Free device memory
-  cudaFree(d_a);
-  cudaFree(d_b);
-  cudaFree(d_result);
-  cudaMemPrefetchAsync(d_result, sizeof(float), cudaCpuDeviceId); // Prefetch c to CPU
-
-  return 0;
+    return 0;
 }
