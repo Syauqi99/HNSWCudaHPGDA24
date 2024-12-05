@@ -16,21 +16,8 @@ include_directories(${PROJECT_SOURCE_DIR}/include_1)
 # Add the executables
 add_executable(euclidean_cuda main_cu.cu)          # CUDA version
 add_executable(euclidean_cpu main_cu.cpp)          # CPU version
-
-# Set CUDA specific properties for all CUDA targets
-set_target_properties(
-    main_search_layer 
-    hnsw1
-    euclidean_cuda
-    PROPERTIES
-        CUDA_SEPARABLE_COMPILATION ON
-        CUDA_ARCHITECTURES "75"
-)
-
 # Add optimization flags for CUDA targets
 set_target_properties(
-    main_search_layer
-    hnsw1
     euclidean_cuda
     PROPERTIES
         CUDA_FLAGS "-O3"
