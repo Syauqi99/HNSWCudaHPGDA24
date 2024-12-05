@@ -1,12 +1,8 @@
 #include <cuda_runtime.h>
-#include <hnsw.hpp>
-#include <utils.hpp>
 #include <stdio.h>
 #include <assert.h>
 #include <chrono>
-
-using namespace utils1;
-using namespace hnsw1;
+#include <iostream>  // Added this header for std::cout
 
 __global__ void cuda_euclidean_distance(float *a, float *b, float *result, int N) {
     // Declare shared memory array - visible to all threads in the same block
@@ -57,7 +53,7 @@ int main() {
   // Host code to launch the kernel
   float *d_a, *d_b, *d_result;
   int N = 1000000;  // Size of arrays
-  
+
   // Start timing
   auto start = std::chrono::high_resolution_clock::now();
 
