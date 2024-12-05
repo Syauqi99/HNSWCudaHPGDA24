@@ -37,12 +37,12 @@ int main() {
         b[i] = static_cast<float>(i + 1);
     }
 
+    // Start timing
+    auto start = std::chrono::high_resolution_clock::now();
+
     // Create Data objects
     Data<float> data_a(a);
     Data<float> data_b(b);
-
-    // Start timing
-    auto start = std::chrono::high_resolution_clock::now();
     
     // Calculate Euclidean distance
     float result = euclidean_distance(data_a, data_b);

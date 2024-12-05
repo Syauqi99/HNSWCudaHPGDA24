@@ -50,30 +50,63 @@ __global__ void cuda_euclidean_distance(float *a, float *b, float *result, int N
 }
 
 int main() {
-  // Host code to launch the kernel
-  float *d_a, *d_b, *d_result;
   int N = 1000000;  // Size of arrays
+
+  
+  // Allocate host memory
+  h_a = (float*)malloc(N * sizeof(float));
+  h_b = (float*)malloc(N * sizeof(float));
+  h_result = (float*)malloc(sizeof(float));
+
+  // Initialize host arrays
+  for (int i = 0; i < N; i++) {
+      h_a[i] = static_cast<float>(i);
+      h_b[i] = static_cast<float>(i + 1);
+  }
+  *h_result = 0.0f;
+
+
 
   // Start timing
   auto start = std::chrono::high_resolution_clock::now();
+  // Host code to launch the kernel
+  float *d_a, *d_b, *d_result;
+  size_t size = N * sizeof(float);
 
   // Allocate device memory
-  cudaMalloc(&d_a, N * sizeof(float));
-  cudaMalloc(&d_b, N * sizeof(float));
+  cudaMalloc(&d_a, size);
+  cudaMalloc(&d_b, size);
   cudaMalloc(&d_result, sizeof(float));
+
+  if (checkCuda(cudaMallocManaged(&d_a, size)) != cudaSuccess){
+    exit(1);
+  }
+
+  if (checkCuda(cudaMallocManaged(&d_b, size)) != cudaSuccess){
+    exit(1);
+  }
+
+  if (checkCuda(cudaMallocManaged(&d_c, size)) != cudaSuccess){
+    exit(1);
+  }
+
+  cudaGetDevice(&deviceId);
+  cudaGetDeviceProperties(&props, deviceId);
+
+  threadsPerBlock = props.maxThreadsPerBlock;
+  numberOfBlocks = props.multiProcessorCount * 2;
+
+  cudaMemPrefetchAsync(d_a, size, deviceId);
+  cudaMemPrefetchAsync(d_b, size, deviceId);
 
   // Initialize result to 0
   cudaMemset(d_result, 0, sizeof(float));
-
-  // Calculate launch parameters
-  int blockSize = 256;
-  int numBlocks = (N + blockSize - 1) / blockSize;
 
   cudaError_t addVectorsErr;
   cudaError_t asyncErr;
 
   // Launch kernel with shared memory size = blockSize * sizeof(float)
-  cuda_euclidean_distance<<<numBlocks, blockSize, blockSize * sizeof(float)>>>(
+  cuda_euclidean_distance<<<numberOfBlocks, threadsPerBlock>>>(
       d_a, d_b, d_result, N
   );
 
@@ -87,12 +120,13 @@ int main() {
   auto end = std::chrono::high_resolution_clock::now();
   auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
 
+  std::cout << "Time taken: " << duration << " microseconds" << std::endl;
+
   // Free device memory
   cudaFree(d_a);
   cudaFree(d_b);
   cudaFree(d_result);
-
-  std::cout << "Time taken: " << duration << " microseconds" << std::endl;
+  cudaMemPrefetchAsync(d_result, sizeof(float), cudaCpuDeviceId); // Prefetch c to CPU
 
   return 0;
 }
