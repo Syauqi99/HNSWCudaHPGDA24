@@ -60,35 +60,12 @@ __global__ void cuda_euclidean_distance(float *a, float *b, float *result, int N
     }
 }
 
-// Define a simple Data structure to hold the data
-template <typename T = float>
-struct Data {
-    std::vector<T> x;
-
-    Data(std::vector<T> v) : x(v) {}
-
-    size_t size() const { return x.size(); }
-
-    const T& operator[](size_t i) const { return x[i]; }
-};
-
-// Euclidean distance function
-template <typename T = float>
-float euclidean_distance(const Data<T>& p1, const Data<T>& p2) {
-    float result = 0;
-    for (size_t i = 0; i < p1.size(); i++) {
-        result += std::pow(p1[i] - p2[i], 2);
-    }
-    result = std::sqrt(result);
-    return result;
-}
-
 int main() {
     int N = 1000000;  // Size of arrays
   
-    // Initialize vectors with some values
-    std::vector<float> a(N);
-    std::vector<float> b(N);
+    // Replace std::vector with raw arrays
+    float* a = new float[N];
+    float* b = new float[N];
     for (int i = 0; i < N; i++) {
         a[i] = static_cast<float>(i);
         b[i] = static_cast<float>(i + 1);
@@ -106,8 +83,8 @@ int main() {
     cudaMalloc(&d_result, sizeof(float));
 
     // Copy data from vectors to device
-    cudaMemcpy(d_a, a.data(), size, cudaMemcpyHostToDevice);
-    cudaMemcpy(d_b, b.data(), size, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_a, a, size, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_b, b, size, cudaMemcpyHostToDevice);
 
     // Initialize result to 0
     cudaMemset(d_result, 0, sizeof(float));
@@ -125,8 +102,8 @@ int main() {
     // Use cudaMemcpyAsync for better performance
     cudaStream_t stream;
     cudaStreamCreate(&stream);
-    cudaMemcpyAsync(d_a, a.data(), size, cudaMemcpyHostToDevice, stream);
-    cudaMemcpyAsync(d_b, b.data(), size, cudaMemcpyHostToDevice, stream);
+    cudaMemcpyAsync(d_a, a, size, cudaMemcpyHostToDevice, stream);
+    cudaMemcpyAsync(d_b, b, size, cudaMemcpyHostToDevice, stream);
     
     // Launch kernel
     cuda_euclidean_distance<<<numberOfBlocks, threadsPerBlock, threadsPerBlock * sizeof(float), stream>>>(
@@ -156,27 +133,6 @@ int main() {
     cudaFree(d_b);
     cudaFree(d_result);
     cudaMemPrefetchAsync(d_result, sizeof(float), cudaCpuDeviceId); // Prefetch c to CPU
-
-
-    // Start timing
-    auto start = std::chrono::high_resolution_clock::now();
-
-    // Create Data objects
-    Data<float> data_a(a);
-    Data<float> data_b(b);
-  
-    // Calculate Euclidean distance
-    float result = euclidean_distance(data_a, data_b);
-  
-    // End timing
-    auto end = std::chrono::high_resolution_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
-
-    std::cout << "Result: " << result << std::endl;
-    std::cout << "Time taken CPU: " << duration << " microseconds" << std::endl;
-
-    // Clean up stream
-    cudaStreamDestroy(stream);
 
     return 0;
 }
