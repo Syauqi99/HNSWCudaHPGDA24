@@ -5,46 +5,57 @@
 #include <iostream>  // Added this header for std::cout
 
 __global__ void cuda_euclidean_distance(float *a, float *b, float *result, int N) {
-    // Declare shared memory array - visible to all threads in the same block
-    // Size must be specified when kernel is launched
     extern __shared__ float shared_data[];
+    
+    // Use multiple elements per thread to reduce memory latency
+    const int elementsPerThread = 4;  // Process 4 elements per thread
+    int threadId = threadIdx.x + blockIdx.x * blockDim.x;
+    int gridStride = blockDim.x * gridDim.x * elementsPerThread;
+    int localId = threadIdx.x;
 
-    // Calculate global thread ID and stride
-    int threadId = threadIdx.x + blockIdx.x * blockDim.x;  // Global thread ID
-    int gridStride = blockDim.x * gridDim.x;               // Total number of threads
-    int localId = threadIdx.x;                             // Local thread ID within the block
+    // Initialize local sum using register
+    float local_sum = 0.0f;
 
-    // Initialize local sum for this thread
-    float sum = 0.0f;
-
-    // Each thread processes multiple elements with grid-stride loop
-    // This allows handling arrays larger than total number of threads
-    for (int i = threadId; i < N; i += gridStride) {
-        float diff = a[i] - b[i];        // Calculate difference
-        sum += diff * diff;              // Add squared difference to local sum
+    // Process multiple elements per thread
+    #pragma unroll
+    for (int i = threadId * elementsPerThread; i < N; i += gridStride) {
+        float sum_chunk = 0.0f;
+        
+        #pragma unroll
+        for (int j = 0; j < elementsPerThread && (i + j) < N; j++) {
+            float diff = a[i + j] - b[i + j];
+            sum_chunk += diff * diff;
+        }
+        local_sum += sum_chunk;
     }
 
-    // Store this thread's sum in shared memory
-    shared_data[localId] = sum;
-    
-    // Ensure all threads in block have written to shared memory
+    // Store in shared memory
+    shared_data[localId] = local_sum;
     __syncthreads();
 
-    // Parallel reduction in shared memory
-    // This loop reduces the partial sums in shared memory to a single sum per block
-    for (int stride = blockDim.x / 2; stride > 0; stride /= 2) {
-        if (localId < stride) {
-            // Each thread adds a value from the second half to the first half
-            shared_data[localId] += shared_data[localId + stride];
+    // Optimized reduction using warp-level primitives
+    if (blockDim.x >= 64) {
+        if (localId < 32) {
+            // Warp-level reduction (no sync needed within a warp)
+            volatile float* smem = shared_data;
+            if (blockDim.x >= 64) smem[localId] += smem[localId + 32];
+            if (blockDim.x >= 32) smem[localId] += smem[localId + 16];
+            if (blockDim.x >= 16) smem[localId] += smem[localId + 8];
+            if (blockDim.x >= 8)  smem[localId] += smem[localId + 4];
+            if (blockDim.x >= 4)  smem[localId] += smem[localId + 2];
+            if (blockDim.x >= 2)  smem[localId] += smem[localId + 1];
         }
-        // Ensure all threads have finished reading shared memory before next iteration
-        __syncthreads();
+    } else {
+        // Original reduction for smaller block sizes
+        for (int stride = blockDim.x / 2; stride > 0; stride /= 2) {
+            if (localId < stride) {
+                shared_data[localId] += shared_data[localId + stride];
+            }
+            __syncthreads();
+        }
     }
 
-    // Only thread 0 in each block writes the final result
     if (localId == 0) {
-        // Atomically add this block's sum to the global result
-        // atomicAdd is necessary because multiple blocks may write simultaneously
         atomicAdd(result, shared_data[0]);
     }
 }
@@ -107,11 +118,18 @@ int main() {
     cudaGetDevice(&deviceId);
     cudaGetDeviceProperties(&props, deviceId);
 
-    int threadsPerBlock = props.maxThreadsPerBlock;
-    int numberOfBlocks = props.multiProcessorCount * 4;
-
-    // Launch kernel with shared memory size = threadsPerBlock * sizeof(float)
-    cuda_euclidean_distance<<<numberOfBlocks, threadsPerBlock, threadsPerBlock * sizeof(float)>>>(
+    int threadsPerBlock = 256;  // Use power of 2, typically 256 works well
+    int blocksPerSM = 2048 / threadsPerBlock;  // Maximize occupancy
+    int numberOfBlocks = props.multiProcessorCount * blocksPerSM;
+    
+    // Use cudaMemcpyAsync for better performance
+    cudaStream_t stream;
+    cudaStreamCreate(&stream);
+    cudaMemcpyAsync(d_a, a.data(), size, cudaMemcpyHostToDevice, stream);
+    cudaMemcpyAsync(d_b, b.data(), size, cudaMemcpyHostToDevice, stream);
+    
+    // Launch kernel
+    cuda_euclidean_distance<<<numberOfBlocks, threadsPerBlock, threadsPerBlock * sizeof(float), stream>>>(
         d_a, d_b, d_result, N
     );
 
@@ -157,6 +175,8 @@ int main() {
     std::cout << "Result: " << result << std::endl;
     std::cout << "Time taken CPU: " << duration << " microseconds" << std::endl;
 
+    // Clean up stream
+    cudaStreamDestroy(stream);
 
     return 0;
 }
