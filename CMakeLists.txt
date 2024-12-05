@@ -14,18 +14,29 @@ enable_language(CUDA)
 include_directories(${PROJECT_SOURCE_DIR}/include_1)
 
 # Add the executables
-add_executable(hnsw1 main_1.cu include_1/cuda_kernels.cu)
-add_executable(main_search_layer main_search_layer.cu include_1/cuda_kernels.cu)
+add_executable(euclidean_cuda main_cu.cu)          # CUDA version
+add_executable(euclidean_cpu main_cu.cpp)          # CPU version
 
-# Set CUDA specific properties
-set_target_properties(main_search_layer PROPERTIES
-    CUDA_SEPARABLE_COMPILATION ON
-    CUDA_ARCHITECTURES "75"
+# Set CUDA specific properties for all CUDA targets
+set_target_properties(
+    main_search_layer 
+    hnsw1
+    euclidean_cuda
+    PROPERTIES
+        CUDA_SEPARABLE_COMPILATION ON
+        CUDA_ARCHITECTURES "75"
 )
 
-# Add optimization flags
-set_target_properties(main_search_layer PROPERTIES
-    CUDA_FLAGS "-O3"
+# Add optimization flags for CUDA targets
+set_target_properties(
+    main_search_layer
+    hnsw1
+    euclidean_cuda
+    PROPERTIES
+        CUDA_FLAGS "-O3"
 )
+
+# Add optimization flags for CPU target
+target_compile_options(euclidean_cpu PRIVATE -O3)
 
 
