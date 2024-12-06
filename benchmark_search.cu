@@ -2,28 +2,36 @@
 #include <chrono>
 #include "hnsw1.hpp"
 #include "utils1.hpp"
+#include <random>
 
 using namespace std;
-using namespace hnsw;
 using namespace utils;
 
 int main() {
     // Test parameters
-    const int n_vectors = 1000;  // Number of vectors in dataset
-    const int dim = 128;         // Dimension of vectors
-    const int m = 16;            // HNSW parameter
-    const int ef = 64;           // HNSW parameter
-    const int k = 10;            // Number of nearest neighbors to find
-    const int n_queries = 100;   // Number of queries to test
+    const int n_vectors = 1000;
+    const int dim = 128;
+    const int m = 16;
+    const int ef = 64;
+    const int k = 10;
+    const int n_queries = 100;
+
+    // Random number generation
+    random_device rd;
+    mt19937 gen(rd());
+    uniform_real_distribution<float> dis(0.0f, 1.0f);
 
     // Generate random dataset
     Dataset<float> dataset;
     for(int i = 0; i < n_vectors; i++) {
         vector<float> vec(dim);
         for(int j = 0; j < dim; j++) {
-            vec[j] = static_cast<float>(rand()) / RAND_MAX;
+            vec[j] = dis(gen);
         }
-        dataset.emplace_back(Data<float>(vec, i));
+        Data<float> data;
+        data.x = vec;
+        data.id = i;
+        dataset.push_back(data);
     }
 
     // Build index
@@ -36,9 +44,12 @@ int main() {
     for(int i = 0; i < n_queries; i++) {
         vector<float> vec(dim);
         for(int j = 0; j < dim; j++) {
-            vec[j] = static_cast<float>(rand()) / RAND_MAX;
+            vec[j] = dis(gen);
         }
-        queries.emplace_back(Data<float>(vec, i));
+        Data<float> query;
+        query.x = vec;
+        query.id = i;
+        queries.push_back(query);
     }
 
     // Test CPU version

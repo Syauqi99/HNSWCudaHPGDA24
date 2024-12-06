@@ -39,6 +39,12 @@ namespace utils {
             std::copy(v.begin(), v.end(), std::back_inserter(x));
         }
 
+        // Modified constructor to handle vector first, then id
+        Data(std::vector<T> v, size_t i) {
+            id = i;
+            std::copy(v.begin(), v.end(), std::back_inserter(x));
+        }
+
         // return the value without copy
         auto& operator [] (size_t i) { return x[i];}
 
