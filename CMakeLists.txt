@@ -32,6 +32,6 @@ set_target_properties(
 
 # Add optimization flags for CPU target
 target_compile_options(euclidean_cpu PRIVATE -O3)
-target_compile_options(vector_diff PRIVATE -O3)
+target_compile_options(euclidean_cuda PRIVATE -O3)
 
 
