@@ -4,9 +4,177 @@
 #include <queue>
 #include <utils1.hpp>
 #include <random>
+#include <stdio.h>
+#include <cuda_runtime.h>
+#include <chrono>
+#include <cmath>
+
+using namespace std::chrono;
+
+void initWith(float num, float *a, int N)
+{
+  for(int i = 0; i < N; ++i)
+  {
+    a[i] = num;
+  }
+}
+
+__global__
+void restVectorsInto(float *result, float *a, float *b, int N)
+{
+  // Process multiple elements per thread
+  const int elementsPerThread = 4;
+  int index = (threadIdx.x + blockIdx.x * blockDim.x) * elementsPerThread;
+  
+  #pragma unroll
+  for(int i = 0; i < elementsPerThread && index + i < N; i++)
+  {
+    int idx = index + i;
+    if (idx < N) {
+      float diff = a[idx] - b[idx];
+      result[idx] = diff * diff;
+    }
+  }
+}
+
+void process_distance_vector(float *distances, int N){
+    for(int i = 0; i < N; i++){
+        sum += distances[i];
+    }
+    sum = sqrt(sum);
+    return sum;
+}
 
 using namespace std;
 using namespace utils;
+
+// Host-side function to process neighbors
+void processNeighborsCuda(
+    const Data<>& query,
+    const vector<int>& neighbor_ids,
+    vector<bool>& visited,
+    float current_top_dist,
+    int ef,
+    cudaStream_t& stream,
+    priority_queue<Neighbor, vector<Neighbor>, CompGreater>& candidates,
+    priority_queue<Neighbor, vector<Neighbor>, CompLess>& top_candidates
+) {
+    const int num_neighbors = neighbor_ids.size();
+    const int dim = query.size();
+    
+    // Allocate device memory
+    float *d_query, *d_layer_data, *d_distances;
+    int *d_neighbor_ids, *d_valid_neighbors;
+    bool *d_visited;
+    
+    cudaMalloc(&d_query, dim * sizeof(float));
+    cudaMalloc(&d_layer_data, dataset.size() * dim * sizeof(float));
+    cudaMalloc(&d_distances, num_neighbors * sizeof(float));
+    cudaMalloc(&d_neighbor_ids, num_neighbors * sizeof(int));
+    cudaMalloc(&d_valid_neighbors, num_neighbors * sizeof(int));
+    cudaMalloc(&d_visited, dataset.size() * sizeof(bool));
+    
+    // Copy data to device
+    cudaMemcpyAsync(d_query, query.data(), dim * sizeof(float),
+                   cudaMemcpyHostToDevice, stream);
+    cudaMemcpyAsync(d_layer_data, dataset.data(), dataset.size() * dim * sizeof(float),
+                   cudaMemcpyHostToDevice, stream);
+    cudaMemcpyAsync(d_neighbor_ids, neighbor_ids.data(), num_neighbors * sizeof(int),
+                   cudaMemcpyHostToDevice, stream);
+    cudaMemcpyAsync(d_visited, visited.data(), visited.size() * sizeof(bool),
+                   cudaMemcpyHostToDevice, stream);
+    // Launch kernel
+    int threadsPerBlock = 256;
+    int numBlocks = (num_neighbors + threadsPerBlock - 1) / threadsPerBlock;
+    
+    processNeighborsKernel<<<numBlocks, threadsPerBlock, dim * sizeof(float), stream>>>(
+        d_query, d_layer_data, d_neighbor_ids, num_neighbors,
+        d_visited, current_top_dist, ef, d_distances, d_valid_neighbors, dim
+    );
+    
+    // Allocate host memory for results
+    vector<float> distances(num_neighbors);
+    vector<int> valid_neighbors(num_neighbors);
+    
+    // Copy results back to host
+    cudaMemcpyAsync(distances.data(), d_distances, num_neighbors * sizeof(float),
+                   cudaMemcpyDeviceToHost, stream);
+    cudaMemcpyAsync(valid_neighbors.data(), d_valid_neighbors, num_neighbors * sizeof(int),
+                   cudaMemcpyDeviceToHost, stream);
+    cudaMemcpyAsync(visited.data(), d_visited, visited.size() * sizeof(bool),
+                   cudaMemcpyDeviceToHost, stream);
+    
+    cudaStreamSynchronize(stream);
+    
+    // Process results
+    for (int i = 0; i < num_neighbors; i++) {
+        if (valid_neighbors[i]) {
+            candidates.emplace(distances[i], neighbor_ids[i]);
+            top_candidates.emplace(distances[i], neighbor_ids[i]);
+            
+            if (top_candidates.size() > ef) {
+                top_candidates.pop();
+            }
+        }
+    }
+        
+    // Cleanup
+    cudaFree(d_query);
+    cudaFree(d_layer_data);
+    cudaFree(d_distances);
+    cudaFree(d_neighbor_ids);
+    cudaFree(d_valid_neighbors);
+    cudaFree(d_visited);
+}
+
+__global__ void processNeighborsKernel(
+    const float* query_data,          // Query point data
+    const float* layer_data,          // All node data in current layer
+    const int* neighbor_ids,          // Array of neighbor IDs
+    const int num_neighbors,          // Number of neighbors to process
+    bool* visited,                    // Visited array
+    float current_top_dist,          // Current top candidate distance
+    int ef,                          // ef parameter
+    float* distances,                // Output distances
+    int* valid_neighbors,            // Output valid neighbor flags
+    const int dim                    // Dimensionality of data
+)
+{
+    extern __shared__ float shared_query[];
+    
+    // Load query into shared memory
+    int tid = threadIdx.x + blockIdx.x * blockDim.x;
+    if (tid < dim) {
+        shared_query[tid] = query_data[tid];
+    }
+    __syncthreads();
+    
+    // Process neighbors in parallel
+    if (tid < num_neighbors) {
+        int neighbor_id = neighbor_ids[tid];
+        
+        // Check if already visited using atomic operation
+        if (atomicCAS(&visited[neighbor_id], false, true) == false) {
+            // Calculate distance
+            float dist = 0.0f;
+            const float* neighbor_data = layer_data + neighbor_id * dim;
+            
+            #pragma unroll 4
+            for (int d = 0; d < dim; d++) {
+                float diff = shared_query[d] - neighbor_data[d];
+                dist += diff * diff;
+            }
+            dist = sqrtf(dist);
+            
+            // Store results
+            distances[tid] = dist;
+            valid_neighbors[tid] = (dist < current_top_dist || ef > 0) ? 1 : 0;
+        } else {
+            valid_neighbors[tid] = 0;
+            distances[tid] = INFINITY;
+        }
+    }
+}
 
 
 namespace hnsw {
@@ -87,6 +255,56 @@ namespace hnsw {
 
         int get_new_node_level() {
             return static_cast<int>(-log(unif_dist(engine)) * m_l);
+        }
+
+        auto hibrid_search_layer(const Data<>& query, int start_node_id, int ef, int l_c) {
+            auto result = SearchResult();
+
+            vector<bool> visited(dataset.size());
+            visited[start_node_id] = true;
+
+            priority_queue<Neighbor, vector<Neighbor>, CompGreater> candidates;
+            priority_queue<Neighbor, vector<Neighbor>, CompLess> top_candidates;
+
+            // Create CUDA stream
+            cudaStream_t stream;
+            cudaStreamCreate(&stream);
+
+            const auto& start_node = layers[l_c][start_node_id];
+            const auto dist_from_en = calc_dist(query, start_node.data);
+
+            candidates.emplace(dist_from_en, start_node_id);
+            top_candidates.emplace(dist_from_en, start_node_id);
+
+            while (!candidates.empty()) {
+                const auto nearest_candidate = candidates.top();
+                const auto& nearest_candidate_node = layers[l_c][nearest_candidate.id];
+                candidates.pop();
+
+                if (nearest_candidate.dist > top_candidates.top().dist) break;
+
+                // Process neighbors using CUDA
+                processNeighborsCuda(
+                    query,
+                    nearest_candidate_node.neighbors,
+                    visited,
+                    top_candidates.top().dist,
+                    ef,
+                    stream,
+                    candidates,     
+                    top_candidates   
+                );
+            }
+
+            // Build result from top candidates
+            while (!top_candidates.empty()) {
+                result.result.emplace_back(top_candidates.top());
+                top_candidates.pop();
+            }
+
+            // Cleanup CUDA resources
+            cudaStreamDestroy(stream);
+            return result;
         }
 
         auto search_layer(const Data<>& query, int start_node_id, int ef, int l_c) {

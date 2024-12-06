@@ -21,6 +21,7 @@ include_directories(${PROJECT_SOURCE_DIR}/include_1)
 # Add the executables
 add_executable(euclidean_cuda euclidean_distance.cu)          # CUDA version
 add_executable(euclidean_cpu euclidean_distance.cpp)          # CPU version
+add_executable(benchmark_search benchmark_search.cpp)
 
 # Add optimization flags for CUDA targets
 set_target_properties(
@@ -33,5 +34,8 @@ set_target_properties(
 # Add optimization flags for CPU target
 target_compile_options(euclidean_cpu PRIVATE -O3)
 target_compile_options(euclidean_cuda PRIVATE -O3)
+
+target_link_libraries(benchmark_search PRIVATE CUDA::cudart)
+set_target_properties(benchmark_search PROPERTIES CUDA_ARCHITECTURES native)
 
 

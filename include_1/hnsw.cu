@@ -30,3 +30,11 @@ void restVectorsInto(float *result, float *a, float *b, int N)
     }
   }
 }
+
+void process_distance_vector(float *distances, int N){
+    for(int i = 0; i < N; i++){
+        sum += distances[i];
+    }
+    sum = sqrt(sum);
+    return sum;
+}
