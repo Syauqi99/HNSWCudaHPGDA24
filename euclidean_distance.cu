@@ -31,79 +31,56 @@ void restVectorsInto(float *result, float *a, float *b, int N)
   }
 }
 
-// Kernel for optimized parallel reduction
-__global__ void sumReductionKernel(float *input, float *output, int N) {
+// Single-kernel reduction optimized for small arrays (N <= 1024)
+__global__ void smallArrayReductionKernel(float *input, float *output, int N) {
     extern __shared__ float sdata[];
     
     unsigned int tid = threadIdx.x;
-    unsigned int i = blockIdx.x * (blockDim.x * 2) + threadIdx.x;
+    unsigned int i = tid;
     
-    // Load and perform first add of reduction
-    sdata[tid] = 0;
-    if (i < N) sdata[tid] = input[i];
-    if (i + blockDim.x < N) sdata[tid] += input[i + blockDim.x];
+    // Load input into shared memory
+    sdata[tid] = (i < N) ? input[i] : 0;
     __syncthreads();
     
-    // Reduction in shared memory
-    for (unsigned int s = blockDim.x/2; s > 32; s >>= 1) {
-        if (tid < s) {
-            sdata[tid] += sdata[tid + s];
-        }
-        __syncthreads();
-    }
+    // Unrolled reduction for better performance
+    if (N >= 512) { if (tid < 256) { sdata[tid] += sdata[tid + 256]; } __syncthreads(); }
+    if (N >= 256) { if (tid < 128) { sdata[tid] += sdata[tid + 128]; } __syncthreads(); }
+    if (N >= 128) { if (tid < 64)  { sdata[tid] += sdata[tid + 64]; }  __syncthreads(); }
     
-    // Unroll last 6 iterations (warp size = 32)
+    // Last warp reduction (no sync needed)
     if (tid < 32) {
         volatile float* smem = sdata;
-        if (blockDim.x >= 64) smem[tid] += smem[tid + 32];
-        if (blockDim.x >= 32) smem[tid] += smem[tid + 16];
-        if (blockDim.x >= 16) smem[tid] += smem[tid + 8];
-        if (blockDim.x >= 8)  smem[tid] += smem[tid + 4];
-        if (blockDim.x >= 4)  smem[tid] += smem[tid + 2];
-        if (blockDim.x >= 2)  smem[tid] += smem[tid + 1];
+        if (N >= 64) smem[tid] += smem[tid + 32];
+        if (N >= 32) smem[tid] += smem[tid + 16];
+        if (N >= 16) smem[tid] += smem[tid + 8];
+        if (N >= 8)  smem[tid] += smem[tid + 4];
+        if (N >= 4)  smem[tid] += smem[tid + 2];
+        if (N >= 2)  smem[tid] += smem[tid + 1];
     }
     
-    if (tid == 0) output[blockIdx.x] = sdata[0];
+    if (tid == 0) output[0] = sdata[0];
 }
 
-// Wrapper function for parallel reduction
+// Simple wrapper for parallel reduction
 float parallelReduceSum(float* d_input, int N, cudaStream_t& stream) {
-    const int threadsPerBlock = 256;
-    const int blocks = (N + (threadsPerBlock * 2) - 1) / (threadsPerBlock * 2);
+    float final_sum;
+    float *d_output;
+    cudaMalloc(&d_output, sizeof(float));
     
-    // Allocate memory for partial sums
-    float *d_partial_sums;
-    cudaMalloc(&d_partial_sums, blocks * sizeof(float));
+    // Round up to nearest warp size (32)
+    int threadsNeeded = (N + 31) / 32 * 32;
     
-    // First reduction step
-    sumReductionKernel<<<blocks, threadsPerBlock, 
-                        threadsPerBlock * sizeof(float), stream>>>(
-        d_input, d_partial_sums, N
+    // Launch single kernel for reduction
+    smallArrayReductionKernel<<<1, threadsNeeded, threadsNeeded * sizeof(float), stream>>>(
+        d_input, d_output, N
     );
     
-    // Final result
-    float final_sum;
-    
-    if (blocks > 1) {
-        // Second reduction if needed
-        float *d_final_sum;
-        cudaMalloc(&d_final_sum, sizeof(float));
-        
-        sumReductionKernel<<<1, threadsPerBlock, 
-                            threadsPerBlock * sizeof(float), stream>>>(
-            d_partial_sums, d_final_sum, blocks
-        );
-        
-        cudaMemcpyAsync(&final_sum, d_final_sum, sizeof(float), 
-                       cudaMemcpyDeviceToHost, stream);
-        cudaFree(d_final_sum);
-    } else {
-        cudaMemcpyAsync(&final_sum, d_partial_sums, sizeof(float), 
-                       cudaMemcpyDeviceToHost, stream);
-    }
+    // Copy result back to host
+    cudaMemcpyAsync(&final_sum, d_output, sizeof(float), 
+                   cudaMemcpyDeviceToHost, stream);
     
     cudaStreamSynchronize(stream);
-    cudaFree(d_partial_sums);
+    cudaFree(d_output);
     
     return final_sum;
 }
