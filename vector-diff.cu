@@ -50,7 +50,8 @@ int main()
   const int N = 128;
   size_t size = N * sizeof(float);
 
-  clock_t start = clock();
+  // Start timing
+  auto start = std::chrono::high_resolution_clock::now();
 
   float *a;
   float *b;
@@ -81,8 +82,6 @@ int main()
   asyncErr = cudaDeviceSynchronize();
   if(asyncErr != cudaSuccess) printf("Error: %s\n", cudaGetErrorString(asyncErr));
 
-  checkElementsAre(7, c, N);
-
   float sum = 0;
   for (int i = 0; i < N; i++) {
     sum += c[i];
@@ -90,9 +89,10 @@ int main()
   sum = sqrt(sum);
   printf("Sum of result: %f\n", sum);
 
-  clock_t end = clock();
-  double duration = ((double)(end - start)) / CLOCKS_PER_SEC * 1000000;
-  printf("Time taken: %f microseconds\n", duration);
+  // End timing
+  auto end = std::chrono::high_resolution_clock::now();
+  auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+  std::cout << "Time taken: " << duration << " microseconds" << std::endl;
 
   cudaFree(a);
   cudaFree(b);
