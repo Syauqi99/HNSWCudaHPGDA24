@@ -1,5 +1,9 @@
 #include <stdio.h>
 #include <cuda_runtime.h>
+#include <chrono>
+#include <cmath>
+
+using namespace std::chrono;
 
 void initWith(float num, float *a, int N)
 {
@@ -46,8 +50,7 @@ int main()
   const int N = 128;
   size_t size = N * sizeof(float);
 
-  // count time
-  auto start = std::chrono::high_resolution_clock::now();
+  clock_t start = clock();
 
   float *a;
   float *b;
@@ -80,16 +83,16 @@ int main()
 
   checkElementsAre(7, c, N);
 
-  // sum the result
   float sum = 0;
   for (int i = 0; i < N; i++) {
     sum += c[i];
   }
+  sum = sqrt(sum);
   printf("Sum of result: %f\n", sum);
 
-  auto end = std::chrono::high_resolution_clock::now();
-  auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
-  printf("Time taken: %d microseconds\n", duration);
+  clock_t end = clock();
+  double duration = ((double)(end - start)) / CLOCKS_PER_SEC * 1000000;
+  printf("Time taken: %f microseconds\n", duration);
 
   cudaFree(a);
   cudaFree(b);
