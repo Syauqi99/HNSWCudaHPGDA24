@@ -50,8 +50,7 @@ int main()
   const int N = 128;
   size_t size = N * sizeof(float);
 
-  // Start timing
-  auto start = std::chrono::high_resolution_clock::now();
+  clock_t start = clock();
 
   float *a;
   float *b;
@@ -68,8 +67,8 @@ int main()
   size_t threadsPerBlock;
   size_t numberOfBlocks;
 
-  threadsPerBlock = 256;
-  numberOfBlocks = 32 * numberOfSMs;
+  threadsPerBlock = N;
+  numberOfBlocks = 3;
 
   cudaError_t addVectorsErr;
   cudaError_t asyncErr;
@@ -82,6 +81,7 @@ int main()
   asyncErr = cudaDeviceSynchronize();
   if(asyncErr != cudaSuccess) printf("Error: %s\n", cudaGetErrorString(asyncErr));
 
+  // sum the result
   float sum = 0;
   for (int i = 0; i < N; i++) {
     sum += c[i];
@@ -89,10 +89,9 @@ int main()
   sum = sqrt(sum);
   printf("Sum of result: %f\n", sum);
 
-  // End timing
-  auto end = std::chrono::high_resolution_clock::now();
-  auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
-  std::cout << "Time taken: " << duration << " microseconds" << std::endl;
+  clock_t end = clock();
+  double duration = ((double)(end - start)) / CLOCKS_PER_SEC * 1000000;
+  printf("Time taken: %.2f microseconds\n", duration);
 
   cudaFree(a);
   cudaFree(b);
