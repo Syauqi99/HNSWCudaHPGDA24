@@ -19,14 +19,13 @@ set(CMAKE_CUDA_ARCHITECTURES 75)  # For newer GPUs
 include_directories(${PROJECT_SOURCE_DIR}/include_1)
 
 # Add the executables
-add_executable(euclidean_cuda main_cu.cu)          # CUDA version
-add_executable(euclidean_cpu main_cu.cpp)          # CPU version
-add_executable(vector_diff vector-diff.cu)         # CUDA version
+add_executable(euclidean_cuda euclidean_distance.cu)          # CUDA version
+add_executable(euclidean_cpu euclidean_cpu.cpp)          # CPU version
 
 # Add optimization flags for CUDA targets
 set_target_properties(
-    euclidean_cuda
-    vector_diff
+    euclidean_cuda 
+    euclidean_cpu
     PROPERTIES
         CUDA_FLAGS "-O3"
 )

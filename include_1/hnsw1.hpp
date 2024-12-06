@@ -8,6 +8,7 @@
 using namespace std;
 using namespace utils;
 
+
 namespace hnsw {
     struct Node {
         const Data<>& data;
@@ -69,6 +70,9 @@ namespace hnsw {
 
         mt19937 engine;
         uniform_real_distribution<double> unif_dist;
+
+        // CUDA variables
+        float *d_x, *d_y; // Independent and dependent values on device
 
         HNSW(int m, int ef_construction = 64, bool extend_candidates = false, bool keep_pruned_connections = true) :
                 m(m), m_max_0(m * 2), m_l(1 / log(1.0 * m)),
