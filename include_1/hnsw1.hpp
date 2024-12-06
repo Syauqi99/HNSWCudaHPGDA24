@@ -37,8 +37,9 @@ void restVectorsInto(float *result, float *a, float *b, int N)
   }
 }
 
-void process_distance_vector(float *distances, int N){
-    for(int i = 0; i < N; i++){
+float process_distance_vector(float *distances, int N) {
+    float sum = 0.0f;  // Initialize sum
+    for(int i = 0; i < N; i++) {
         sum += distances[i];
     }
     sum = sqrt(sum);
@@ -68,16 +69,16 @@ void processNeighborsCuda(
     bool *d_visited;
     
     cudaMalloc(&d_query, dim * sizeof(float));
-    cudaMalloc(&d_layer_data, dataset.size() * dim * sizeof(float));
+    cudaMalloc(&d_layer_data, this->dataset.size() * dim * sizeof(float));
     cudaMalloc(&d_distances, num_neighbors * sizeof(float));
     cudaMalloc(&d_neighbor_ids, num_neighbors * sizeof(int));
     cudaMalloc(&d_valid_neighbors, num_neighbors * sizeof(int));
-    cudaMalloc(&d_visited, dataset.size() * sizeof(bool));
+    cudaMalloc(&d_visited, this->dataset.size() * sizeof(bool));
     
     // Copy data to device
-    cudaMemcpyAsync(d_query, query.data(), dim * sizeof(float),
+    cudaMemcpyAsync(d_query, query.x.data(), dim * sizeof(float),
                    cudaMemcpyHostToDevice, stream);
-    cudaMemcpyAsync(d_layer_data, dataset.data(), dataset.size() * dim * sizeof(float),
+    cudaMemcpyAsync(d_layer_data, this->dataset.data(), this->dataset.size() * dim * sizeof(float),
                    cudaMemcpyHostToDevice, stream);
     cudaMemcpyAsync(d_neighbor_ids, neighbor_ids.data(), num_neighbors * sizeof(int),
                    cudaMemcpyHostToDevice, stream);
@@ -128,34 +129,31 @@ void processNeighborsCuda(
 }
 
 __global__ void processNeighborsKernel(
-    const float* query_data,          // Query point data
-    const float* layer_data,          // All node data in current layer
-    const int* neighbor_ids,          // Array of neighbor IDs
-    const int num_neighbors,          // Number of neighbors to process
-    bool* visited,                    // Visited array
-    float current_top_dist,          // Current top candidate distance
-    int ef,                          // ef parameter
-    float* distances,                // Output distances
-    int* valid_neighbors,            // Output valid neighbor flags
-    const int dim                    // Dimensionality of data
-)
-{
+    const float* query_data,
+    const float* layer_data,
+    const int* neighbor_ids,
+    const int num_neighbors,
+    bool* visited,
+    float current_top_dist,
+    int ef,
+    float* distances,
+    int* valid_neighbors,
+    const int dim
+) {
     extern __shared__ float shared_query[];
     
-    // Load query into shared memory
     int tid = threadIdx.x + blockIdx.x * blockDim.x;
+    
     if (tid < dim) {
         shared_query[tid] = query_data[tid];
     }
     __syncthreads();
     
-    // Process neighbors in parallel
     if (tid < num_neighbors) {
         int neighbor_id = neighbor_ids[tid];
         
-        // Check if already visited using atomic operation
-        if (atomicCAS(&visited[neighbor_id], false, true) == false) {
-            // Calculate distance
+        unsigned int* visited_uint = reinterpret_cast<unsigned int*>(&visited[neighbor_id]);
+        if (atomicCAS(visited_uint, 0U, 1U) == 0U) {
             float dist = 0.0f;
             const float* neighbor_data = layer_data + neighbor_id * dim;
             
@@ -166,7 +164,6 @@ __global__ void processNeighborsKernel(
             }
             dist = sqrtf(dist);
             
-            // Store results
             distances[tid] = dist;
             valid_neighbors[tid] = (dist < current_top_dist || ef > 0) ? 1 : 0;
         } else {
@@ -176,6 +173,14 @@ __global__ void processNeighborsKernel(
     }
 }
 
+vector<int> neighbors_to_ids(const Neighbors& neighbors) {
+    vector<int> ids;
+    ids.reserve(neighbors.size());
+    for (const auto& n : neighbors) {
+        ids.push_back(n.id);
+    }
+    return ids;
+}
 
 namespace hnsw {
     struct Node {
@@ -284,9 +289,10 @@ namespace hnsw {
                 if (nearest_candidate.dist > top_candidates.top().dist) break;
 
                 // Process neighbors using CUDA
+                auto neighbor_ids = neighbors_to_ids(nearest_candidate_node.neighbors);
                 processNeighborsCuda(
                     query,
-                    nearest_candidate_node.neighbors,
+                    neighbor_ids,
                     visited,
                     top_candidates.top().dist,
                     ef,
