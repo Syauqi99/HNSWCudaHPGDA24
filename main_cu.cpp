@@ -27,14 +27,14 @@ float euclidean_distance(const Data<T>& p1, const Data<T>& p2) {
 }
 
 int main() {
-    const int N = 1000000;  // Size of arrays
+    const int N = 128;  // Size of arrays
 
     // Initialize vectors with some values
     std::vector<float> a(N);
     std::vector<float> b(N);
     for (int i = 0; i < N; i++) {
-        a[i] = static_cast<float>(i);
-        b[i] = static_cast<float>(i + 1);
+        a[i] = 2;
+        b[i] = 1;
     }
 
     // Start timing
