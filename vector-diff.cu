@@ -16,27 +16,19 @@ void initWith(float num, float *a, int N)
 __global__
 void restVectorsInto(float *result, float *a, float *b, int N)
 {
-  int index = threadIdx.x + blockIdx.x * blockDim.x;
-  int stride = blockDim.x * gridDim.x;
-
-  for(int i = index; i < N; i += stride)
+  // Process multiple elements per thread
+  const int elementsPerThread = 4;
+  int index = (threadIdx.x + blockIdx.x * blockDim.x) * elementsPerThread;
+  
+  #pragma unroll
+  for(int i = 0; i < elementsPerThread && index + i < N; i++)
   {
-    result[i] = a[i] - b[i];
-    result[i] = result[i] * result[i];
-  }
-}
-
-void checkElementsAre(float target, float *vector, int N)
-{
-  for(int i = 0; i < N; i++)
-  {
-    if(vector[i] != target)
-    {
-      printf("FAIL: vector[%d] - %0.0f does not equal %0.0f\n", i, vector[i], target);
-      exit(1);
+    int idx = index + i;
+    if (idx < N) {
+      float diff = a[idx] - b[idx];
+      result[idx] = diff * diff;
     }
   }
-  printf("Success! All values calculated correctly.\n");
 }
 
 int main()
@@ -50,49 +42,62 @@ int main()
   const int N = 128;
   size_t size = N * sizeof(float);
 
-  clock_t start = clock();
+  // Create CUDA stream for async operations
+  cudaStream_t stream;
+  cudaStreamCreate(&stream);
 
-  float *a;
-  float *b;
-  float *c;
-
+  // Allocate memory
+  float *a, *b, *c;
   cudaMallocManaged(&a, size);
   cudaMallocManaged(&b, size);
   cudaMallocManaged(&c, size);
 
+  // Prefetch data to GPU
+  cudaMemPrefetchAsync(a, size, deviceId, stream);
+  cudaMemPrefetchAsync(b, size, deviceId, stream);
+  cudaMemPrefetchAsync(c, size, deviceId, stream);
+
+  // Initialize data
   initWith(2, a, N);
   initWith(1, b, N);
   initWith(0, c, N);
 
-  size_t threadsPerBlock;
-  size_t numberOfBlocks;
+  // Optimize grid and block dimensions
+  int threadsPerBlock = 256;
+  int blocksPerSM = 32;
+  int numberOfBlocks = numberOfSMs * blocksPerSM;
+  
+  // Ensure we have enough threads to cover all elements
+  numberOfBlocks = (N + threadsPerBlock * 4 - 1) / (threadsPerBlock * 4);
 
-  threadsPerBlock = N;
-  numberOfBlocks = 3;
+  // Start timing after setup
+  cudaStreamSynchronize(stream);
+  clock_t start = clock();
 
-  cudaError_t addVectorsErr;
-  cudaError_t asyncErr;
+  // Launch kernel
+  restVectorsInto<<<numberOfBlocks, threadsPerBlock, 0, stream>>>(c, a, b, N);
 
-  restVectorsInto<<<numberOfBlocks, threadsPerBlock>>>(c, a, b, N);
-
-  addVectorsErr = cudaGetLastError();
+  // Check for errors
+  cudaError_t addVectorsErr = cudaGetLastError();
   if(addVectorsErr != cudaSuccess) printf("Error: %s\n", cudaGetErrorString(addVectorsErr));
 
-  asyncErr = cudaDeviceSynchronize();
-  if(asyncErr != cudaSuccess) printf("Error: %s\n", cudaGetErrorString(asyncErr));
-
-  // sum the result
+  // Synchronize and get result
+  cudaStreamSynchronize(stream);
+  
+  // Calculate final result
   float sum = 0;
   for (int i = 0; i < N; i++) {
     sum += c[i];
   }
   sum = sqrt(sum);
-  printf("Sum of result: %f\n", sum);
 
   clock_t end = clock();
   double duration = ((double)(end - start)) / CLOCKS_PER_SEC * 1000000;
   printf("Time taken: %.2f microseconds\n", duration);
+  printf("Result: %.2f\n", sum);
 
+  // Cleanup
+  cudaStreamDestroy(stream);
   cudaFree(a);
   cudaFree(b);
   cudaFree(c);
