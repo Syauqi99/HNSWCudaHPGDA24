@@ -192,6 +192,7 @@ namespace hnsw {
                 int blockSize = 256;
                 int numBlocks = (num_neighbors + blockSize - 1) / blockSize;
                 calculateDistances<<<numBlocks, blockSize>>>(query.x.data(), d_dataset.vectors, d_node_ids, d_distances, query.x.size(), num_neighbors);
+                CUDA_CHECK(cudaDeviceSynchronize());
 
                 vector<float> distances(num_neighbors);
                 CUDA_CHECK(cudaMemcpy(distances.data(), d_distances, num_neighbors * sizeof(float), cudaMemcpyDeviceToHost));

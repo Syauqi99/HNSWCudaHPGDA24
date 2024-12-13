@@ -37,7 +37,8 @@ int main() {
     for (int rep = 0; rep < REPETITIONS; rep++) {
         for (int i = 0; i < n_query; i++) {
             const auto& query = queries[i];
-
+            // add a print
+            cout << "query: " << query.id << endl;
             auto q_start = get_now();
             auto result = index.knn_search(query, k, ef);
             auto q_end = get_now();
