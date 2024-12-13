@@ -153,7 +153,7 @@ namespace hnsw {
             return static_cast<int>(-log(unif_dist(engine)) * m_l);
         }
 
-        auto search_layer(const Data<>& query, int start_node_id, int ef, int l_c) {
+        auto search_layer_cuda(const Data<>& query, int start_node_id, int ef, int l_c) {
             // print running search_layer
             cout << "running search_layer" << endl;
             
@@ -393,7 +393,8 @@ namespace hnsw {
             cout << "start_id_layer: " << start_id_layer << endl;
             
             for (int l_c = enter_node_level; l_c >= 1; --l_c) {
-                const auto result_layer = search_layer(query, start_id_layer, 1, l_c);
+                std::cout << "Before calling search_layer" << std::endl;
+                const auto result_layer = search_layer_cuda(query, start_id_layer, 1, l_c);
                 const auto& nn_id_layer = result_layer.result[0].id;
                 start_id_layer = nn_id_layer;
             }
@@ -401,7 +402,7 @@ namespace hnsw {
             const auto& nn_upper_layer = layers[1][start_id_layer];
 
             // search in base layer
-            const auto result_layer = search_layer(query, start_id_layer, ef, 0);
+            const auto result_layer = search_layer_cuda(query, start_id_layer, ef, 0);
             const auto candidates = result_layer.result;
             for (const auto& candidate : candidates) {
                 result.result.emplace_back(candidate);

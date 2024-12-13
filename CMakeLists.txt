@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.18)
 
 # Set the project name and enable CUDA
 project(HNSWCudaProject LANGUAGES CXX CUDA)
@@ -10,8 +10,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED True)
 # Add the include directories
 include_directories(include include_cuda)
 
-# Find CUDA package
-find_package(CUDA REQUIRED)
+# Enable CUDA language
+enable_language(CUDA)
+
+# Specify CUDA architectures
+set(CMAKE_CUDA_ARCHITECTURES 60 61 70 75 80)  # Adjust based on your target GPU architectures
 
 # Add the executable for the CUDA version
 add_executable(main_cuda_test main_cuda_test.cu)
