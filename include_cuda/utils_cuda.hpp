@@ -1,5 +1,5 @@
-#ifndef UTILS_HPP
-#define UTILS_HPP
+#ifndef UTILS_CUDA_HPP
+#define UTILS_CUDA_HPP
 
 #include <iostream>
 #include <vector>
@@ -36,12 +36,6 @@ namespace utils {
             // if no id then set id = 0
             id = 0;
             // copy the vector only
-            std::copy(v.begin(), v.end(), std::back_inserter(x));
-        }
-
-        // Modified constructor to handle vector first, then id
-        Data(std::vector<T> v, size_t i) {
-            id = i;
             std::copy(v.begin(), v.end(), std::back_inserter(x));
         }
 

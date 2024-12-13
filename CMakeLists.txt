@@ -1,39 +1,35 @@
-cmake_minimum_required(VERSION 3.14)
+cmake_minimum_required(VERSION 3.10)
 
-# Initialize CUDA project
-project(hnsw_search CUDA CXX)
+# Set the project name and enable CUDA
+project(HNSWCudaProject LANGUAGES CXX CUDA)
 
-# Set C++ standard
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
+# Specify the C++ standard
+set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD_REQUIRED True)
 
-# Enable CUDA
-enable_language(CUDA)
+# Add the include directories
+include_directories(include include_cuda)
 
-# Set CUDA architectures
-set(CMAKE_CUDA_ARCHITECTURES 75)  # For newer GPUs
-# Alternative: Support multiple architectures
-# set(CMAKE_CUDA_ARCHITECTURES 60 70 75)
+# Find CUDA package
+find_package(CUDA REQUIRED)
 
-# Add include directories
-include_directories(${PROJECT_SOURCE_DIR}/include_1)
+# Add the executable for the CUDA version
+add_executable(main_cuda_test main_cuda_test.cu)
 
-# Add the executables
-add_executable(euclidean_cuda euclidean_distance.cu)          # CUDA version
-add_executable(euclidean_cpu euclidean_distance.cpp)          # CPU version
-add_executable(benchmark_search benchmark_search.cu)
+# Link CUDA libraries
+target_link_libraries(main_cuda_test ${CUDA_LIBRARIES})
 
-# Add optimization flags for CUDA targets
-set_target_properties(
-    euclidean_cuda 
-    euclidean_cpu
-    PROPERTIES
-        CUDA_FLAGS "-O3"
+# Set properties for CUDA compilation
+set_target_properties(main_cuda_test PROPERTIES
+    CUDA_SEPARABLE_COMPILATION ON
+    CUDA_STANDARD 14
 )
 
-# Add optimization flags for CPU target
-target_compile_options(euclidean_cpu PRIVATE -O3)
-target_compile_options(euclidean_cuda PRIVATE -O3)
-set_target_properties(benchmark_search PROPERTIES CUDA_ARCHITECTURES native)
+# Add the executable for the non-CUDA version if needed
+# add_executable(main main.cpp)
+# target_link_libraries(main <other_libraries>)
+
+# Add any additional libraries or dependencies here
+# target_link_libraries(main_cuda_test <other_libraries>)
 
 
