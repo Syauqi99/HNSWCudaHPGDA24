@@ -312,7 +312,7 @@ namespace hnsw {
             auto start_node_id = enter_node_id;
             for (int l_c = enter_node_level; l_c > l_new_node; --l_c) {
                 // get the nearest neighbour node to the new node in the current layer 
-                const auto nn_layer = search_layer(new_data, start_node_id, 1, l_c).result[0];
+                const auto nn_layer = search_layer_cuda(new_data, start_node_id, 1, l_c).result[0];
                 start_node_id = nn_layer.id;
             }
             // when the previous cycle ends, we have that start_node_id == entry point node in the layer where we want to add the new node
@@ -324,7 +324,7 @@ namespace hnsw {
                 // neighbors will be populated with the nearest neighbors nodes (and corresponding distances) to the new_data node
                 // the entry_point for computing the NN nodes is start_node_id which is the result of the 
                 // previous greedy search from the top layer to the current one
-                auto neighbors = search_layer(new_data, start_node_id, ef_construction, l_c).result;
+                auto neighbors = search_layer_cuda(new_data, start_node_id, ef_construction, l_c).result;
 
                 // if the NN list is greater than M, filter them out with an heuristic
                 if (neighbors.size() > m)
