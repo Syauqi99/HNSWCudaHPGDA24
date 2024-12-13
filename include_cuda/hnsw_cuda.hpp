@@ -154,6 +154,9 @@ namespace hnsw {
         }
 
         auto search_layer(const Data<>& query, int start_node_id, int ef, int l_c) {
+            // print running search_layer
+            cout << "running search_layer" << endl;
+            
             auto result = SearchResult();
 
             vector<bool> visited(dataset.size());
@@ -187,7 +190,7 @@ namespace hnsw {
                 int num_neighbors = neighbor_ids.size();
                 float* d_distances;
                 int* d_node_ids;
-                
+
                 // check print succesfully allocation
                 CUDA_CHECK(cudaMalloc(&d_distances, num_neighbors * sizeof(float)));
                 CUDA_CHECK(cudaMalloc(&d_node_ids, num_neighbors * sizeof(int)));
