@@ -182,11 +182,13 @@ namespace hnsw {
                     neighbor_ids.push_back(neighbor.id);
                 }
 
+                // check print starting search
+                cout << "starting search" << endl;
                 int num_neighbors = neighbor_ids.size();
                 float* d_distances;
                 int* d_node_ids;
+                
                 // check print succesfully allocation
-
                 CUDA_CHECK(cudaMalloc(&d_distances, num_neighbors * sizeof(float)));
                 CUDA_CHECK(cudaMalloc(&d_node_ids, num_neighbors * sizeof(int)));
                 CUDA_CHECK(cudaMemcpy(d_node_ids, neighbor_ids.data(), num_neighbors * sizeof(int), cudaMemcpyHostToDevice));
