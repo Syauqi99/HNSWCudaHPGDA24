@@ -384,10 +384,14 @@ namespace hnsw {
             // ... Copy data and build index on GPU
         }
 
-        auto knn_search(const Data<>& query, int k, int ef) {
+        auto knn_search_cuda(const Data<>& query, int k, int ef) {
+            cout << "running knn_search_cuda" << endl;
+
             SearchResult result;
             // search in upper layers
             auto start_id_layer = enter_node_id;
+            cout << "start_id_layer: " << start_id_layer << endl;
+            
             for (int l_c = enter_node_level; l_c >= 1; --l_c) {
                 const auto result_layer = search_layer(query, start_id_layer, 1, l_c);
                 const auto& nn_id_layer = result_layer.result[0].id;

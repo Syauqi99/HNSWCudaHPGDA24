@@ -40,7 +40,7 @@ int main() {
             // add a print
             cout << "query: " << query.id << endl;
             auto q_start = get_now();
-            auto result = index.knn_search(query, k, ef);
+            auto result = index.knn_search_cuda(query, k, ef);
             auto q_end = get_now();
             total_queries += get_duration(q_start, q_end);
 
