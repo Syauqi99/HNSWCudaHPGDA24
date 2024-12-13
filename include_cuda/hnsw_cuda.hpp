@@ -172,18 +172,18 @@ namespace hnsw {
                 }
 
                 int num_neighbors = neighbor_ids.size();
-                double* d_distances;
+                float* d_distances;
                 int* d_node_ids;
-                CUDA_CHECK(cudaMalloc(&d_distances, num_neighbors * sizeof(double)));
+                CUDA_CHECK(cudaMalloc(&d_distances, num_neighbors * sizeof(float)));
                 CUDA_CHECK(cudaMalloc(&d_node_ids, num_neighbors * sizeof(int)));
                 CUDA_CHECK(cudaMemcpy(d_node_ids, neighbor_ids.data(), num_neighbors * sizeof(int), cudaMemcpyHostToDevice));
 
                 int blockSize = 256;
                 int numBlocks = (num_neighbors + blockSize - 1) / blockSize;
-                calculateDistances<<<numBlocks, blockSize>>>(query.vector.data(), d_dataset.vectors, d_node_ids, d_distances, query.dim, num_neighbors);
+                calculateDistances<<<numBlocks, blockSize>>>(query.x.data(), d_dataset.vectors, d_node_ids, d_distances, query.x.size(), num_neighbors);
 
-                vector<double> distances(num_neighbors);
-                CUDA_CHECK(cudaMemcpy(distances.data(), d_distances, num_neighbors * sizeof(double), cudaMemcpyDeviceToHost));
+                vector<float> distances(num_neighbors);
+                CUDA_CHECK(cudaMemcpy(distances.data(), d_distances, num_neighbors * sizeof(float), cudaMemcpyDeviceToHost));
 
                 for (int i = 0; i < num_neighbors; ++i) {
                     if (distances[i] < top_candidates.top().dist || top_candidates.size() < ef) {
@@ -349,8 +349,9 @@ namespace hnsw {
         }
 
         void build(const Dataset<>& dataset_) {
-            // Allocate and copy data to GPU
-            cudaMalloc(&d_dataset.vectors, dataset_.size() * dataset_[0].dim * sizeof(float));
+            // Ensure you have the correct dimension access
+            int dim = dataset_[0].x.size();
+            cudaMalloc(&d_dataset.vectors, dataset_.size() * dim * sizeof(float));
             // ... Copy data and build index on GPU
         }
 
