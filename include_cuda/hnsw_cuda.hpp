@@ -387,10 +387,10 @@ namespace hnsw {
             std::cout << "running" << std::endl;
 
             SearchResult result;
-            std::cout << "running result " << result << std::endl;
+            std::cout << "running result " << std::endl;
             // search in upper layers
             auto start_id_layer = enter_node_id;
-            std::cout << "start id layer" << start_id_layer << std::endl;
+            std::cout << "start id layer" << std::endl;
 
             for (int l_c = enter_node_level; l_c >= 1; --l_c) {
                 std::cout << "Before calling search_layer" << std::endl;
@@ -400,7 +400,7 @@ namespace hnsw {
             }
 
             std::cout << "before calling nn_upper_layer" << std::endl;
-            
+
             const auto& nn_upper_layer = layers[1][start_id_layer];
 
             // search in base layer
