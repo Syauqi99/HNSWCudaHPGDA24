@@ -379,11 +379,19 @@ namespace hnsw {
         }
 
         void build(const Dataset<>& dataset_) {
-            printf("Building index...\n");
-            // Ensure you have the correct dimension access
+            dataset = dataset_;
+            // Initialize CPU-side data structures first
+            for (const auto& data : dataset) {
+                insert(data);
+            }
+            
+            // Then initialize GPU memory
             int dim = dataset_[0].x.size();
-            cudaMalloc(&d_dataset.vectors, dataset_.size() * dim * sizeof(float));
-            // ... Copy data and build index on GPU
+            CUDA_CHECK(cudaMalloc(&d_dataset.vectors, dataset_.size() * dim * sizeof(float)));
+            d_dataset.dimensions = dim;
+            d_dataset.num_vectors = dataset_.size();
+            
+            cout << "Index construction completed." << endl;
         }
 
         auto knn_search_cuda(const Data<>& query, int k, int ef) {
@@ -401,6 +409,9 @@ namespace hnsw {
                 const auto& nn_id_layer = result_layer.result[0].id;
                 start_id_layer = nn_id_layer;
             }
+
+            const auto& nn_upper_layer = layers[1][start_id_layer];
+
             // search in base layer
             std::cout << "Before calling search_layer 2" << std::endl;
             const auto result_layer = search_layer_cuda(query, start_id_layer, ef, 0);
