@@ -63,7 +63,7 @@ int main() {
   const string save_name =
       "k" + to_string(k) + "-m" + to_string(m) + "-ef" + to_string(ef) + ".csv";
   const string result_base_dir = base_dir + "results/";
-  const string log_path = result_base_dir + "log-" + save_name;
-  const string result_path = result_base_dir + "result-" + save_name;
+  const string log_path = result_base_dir + "logcuda-" + save_name;
+  const string result_path = result_base_dir + "resultcuda-" + save_name;
   results.save(log_path, result_path);
 } 
