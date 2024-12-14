@@ -384,8 +384,8 @@ namespace hnsw {
         }
 
         auto knn_search_cuda(const Data<>& query, int k, int ef) {
-            printf("Running knn_search_cuda\n");
-            
+            std::cout << "running" << std::endl;
+
             SearchResult result;
             // search in upper layers
             auto start_id_layer = enter_node_id;
