@@ -385,12 +385,10 @@ namespace hnsw {
 
         auto knn_search_cuda(const Data<>& query, int k, int ef) {
             printf("Running knn_search_cuda\n");
-            printf("start_id_layer: %d\n", start_id_layer);
             
             SearchResult result;
             // search in upper layers
             auto start_id_layer = enter_node_id;
-            printf("start_id_layer: %d\n", start_id_layer);
             
             for (int l_c = enter_node_level; l_c >= 1; --l_c) {
                 std::cout << "Before calling search_layer" << std::endl;
