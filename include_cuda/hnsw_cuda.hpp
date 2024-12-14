@@ -158,13 +158,9 @@ namespace hnsw {
             
             auto result = SearchResult();
 
-            cout << "result" << endl;
-
             vector<bool> visited(dataset.size());
 
-            cout << "visited" << endl;
             visited[start_node_id] = true;
-            cout << "visited 2" << endl;
 
             priority_queue<Neighbor, vector<Neighbor>, CompGreater> candidates;
             priority_queue<Neighbor, vector<Neighbor>, CompLess> top_candidates;

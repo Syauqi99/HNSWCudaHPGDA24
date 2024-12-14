@@ -19,6 +19,9 @@ set(CMAKE_CUDA_ARCHITECTURES 60 61 70 75 80)  # Adjust based on your target GPU 
 # Add the executable for the CUDA version
 add_executable(main_cuda_test main_cuda_test.cu)
 
+# Add the executable for the CPU version
+add_executable(main main.cpp)
+
 # Link CUDA libraries
 target_link_libraries(main_cuda_test ${CUDA_LIBRARIES})
 
@@ -30,10 +33,6 @@ set_target_properties(main_cuda_test PROPERTIES
 
 set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --expt-relaxed-constexpr")
 include_directories(${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES})
-
-# Add the executable for the non-CUDA version if needed
-# add_executable(main main.cpp)
-# target_link_libraries(main <other_libraries>)
 
 # Add any additional libraries or dependencies here
 # target_link_libraries(main_cuda_test <other_libraries>)
