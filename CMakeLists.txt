@@ -28,6 +28,9 @@ set_target_properties(main_cuda_test PROPERTIES
     CUDA_STANDARD 14
 )
 
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --expt-relaxed-constexpr")
+include_directories(${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES})
+
 # Add the executable for the non-CUDA version if needed
 # add_executable(main main.cpp)
 # target_link_libraries(main <other_libraries>)

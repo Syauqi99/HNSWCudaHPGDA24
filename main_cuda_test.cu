@@ -1,7 +1,7 @@
 #include <hnsw_cuda.hpp>
 #include <utils_cuda.hpp>
 
-#define REPETITIONS 1000
+#define REPETITIONS 1
 
 using namespace utils;
 using namespace hnsw;
