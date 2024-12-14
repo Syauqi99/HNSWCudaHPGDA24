@@ -387,9 +387,11 @@ namespace hnsw {
             std::cout << "running" << std::endl;
 
             SearchResult result;
+            std::cout << "running result" << std::endl;
             // search in upper layers
             auto start_id_layer = enter_node_id;
-            
+            std::cout << "start id layer" << std::endl;
+
             for (int l_c = enter_node_level; l_c >= 1; --l_c) {
                 std::cout << "Before calling search_layer" << std::endl;
                 const auto result_layer = search_layer_cuda(query, start_id_layer, 1, l_c);
