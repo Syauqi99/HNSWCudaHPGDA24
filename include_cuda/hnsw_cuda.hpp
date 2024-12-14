@@ -164,6 +164,8 @@ namespace hnsw {
             priority_queue<Neighbor, vector<Neighbor>, CompGreater> candidates;
             priority_queue<Neighbor, vector<Neighbor>, CompLess> top_candidates;
 
+            cout << "layers[l_c][start_node_id]" << endl;
+            
             const auto& start_node = layers[l_c][start_node_id];
             const auto dist_from_en = calc_dist(query, start_node.data);
 
