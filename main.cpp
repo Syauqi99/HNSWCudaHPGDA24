@@ -56,9 +56,7 @@ int main() {
       result.recall = calc_recall(result.result, ground_truth[query.id], k);
       results[i] = result;
     }
-  }
-  cout << "results: " << results << endl;
-  
+  }  
   cout << "time for " << REPETITIONS * n_query
        << " queries: " << total_queries / 1000 << " [ms]" << endl;
 
