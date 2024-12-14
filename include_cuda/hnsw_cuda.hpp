@@ -155,7 +155,6 @@ namespace hnsw {
 
         auto search_layer_cuda(const Data<>& query, int start_node_id, int ef, int l_c) {
             cout << "Running search_layer" << endl;
-            printf("Running search_layer\n");
             
             auto result = SearchResult();
 
@@ -185,7 +184,7 @@ namespace hnsw {
                     neighbor_ids.push_back(neighbor.id);
                 }
 
-                printf("Starting search\n");
+                cout << "Starting search" << endl;
                 int num_neighbors = neighbor_ids.size();
                 float* d_distances;
                 int* d_node_ids;
@@ -195,20 +194,20 @@ namespace hnsw {
                 CUDA_CHECK(cudaMalloc(&d_node_ids, num_neighbors * sizeof(int)));
                 CUDA_CHECK(cudaMemcpy(d_node_ids, neighbor_ids.data(), num_neighbors * sizeof(int), cudaMemcpyHostToDevice));
                 // check print succesfully allocation
-                printf("Successfully allocated\n");
+                cout << "Successfully allocated" << endl;
 
                 int blockSize = 256;
                 int numBlocks = (num_neighbors + blockSize - 1) / blockSize;
                 calculateDistances<<<numBlocks, blockSize>>>(query.x.data(), d_dataset.vectors, d_node_ids, d_distances, query.x.size(), num_neighbors);
                 CUDA_CHECK(cudaDeviceSynchronize());
                 // check print succesfully sync
-                printf("Successfully synced\n"); 
+                cout << "Successfully synced" << endl;
 
 
                 vector<float> distances(num_neighbors);
                 CUDA_CHECK(cudaMemcpy(distances.data(), d_distances, num_neighbors * sizeof(float), cudaMemcpyDeviceToHost));
                 // check print succesfully copy
-                printf("Successfully copied\n");
+                cout << "Successfully copied" << endl;
 
 
                 for (int i = 0; i < num_neighbors; ++i) {
@@ -223,7 +222,7 @@ namespace hnsw {
                 CUDA_CHECK(cudaFree(d_distances));
                 CUDA_CHECK(cudaFree(d_node_ids));
                 // check print succesfully free
-                printf("Successfully freed\n");
+                cout << "Successfully freed" << endl;
             }
 
             while (!top_candidates.empty()) {
