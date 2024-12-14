@@ -40,26 +40,24 @@ namespace hnsw {
 
     // Improved CUDA kernel
     __global__ void calculateDistances(const float* query, const float* vectors, const int* node_ids, 
-                                         float* distances, int dim, int num_vectors) {
+                                         float* distances, int dim, int num_neighbors) {
         int idx = blockIdx.x * blockDim.x + threadIdx.x;
         
         // Boundary check for thread index
-        if (idx >= num_vectors) return;
+        if (idx >= num_neighbors) return;
         
         float distance = 0.0f;
         int node_id = node_ids[idx];
         
         // Validate node_id and array bounds
-        if (node_id < 0 || node_id >= num_vectors) {
+        if (node_id < 0 || node_id >= num_neighbors) {
             distances[idx] = INFINITY;
             return;
         }
         
         // Safe distance calculation with bounds checking
-        for (int i = 0; i < dim && i < MAX_DIM; i++) {  // Add MAX_DIM as safety
-            float vec_val = vectors[node_id * dim + i];
-            float query_val = query[i];
-            float diff = vec_val - query_val;
+        for (int i = 0; i < dim; i++) {
+            float diff = vectors[node_id * dim + i] - query[i];
             distance += diff * diff;
         }
         
@@ -165,13 +163,16 @@ namespace hnsw {
 
         auto search_layer_cuda(const Data<>& query, int start_node_id, int ef, int l_c) {
             auto result = SearchResult();
-            
-            vector<bool> visited(dataset.size());
-
+            vector<bool> visited(dataset.size(), false);
             visited[start_node_id] = true;
 
             priority_queue<Neighbor, vector<Neighbor>, CompGreater> candidates;
             priority_queue<Neighbor, vector<Neighbor>, CompLess> top_candidates;
+
+            // Allocate and copy query data to device
+            float* d_query;
+            CUDA_CHECK(cudaMalloc(&d_query, query.x.size() * sizeof(float)));
+            CUDA_CHECK(cudaMemcpy(d_query, query.x.data(), query.x.size() * sizeof(float), cudaMemcpyHostToDevice));
 
             const auto& start_node = layers[l_c][start_node_id];
             const auto dist_from_en = calc_dist(query, start_node.data);
@@ -179,69 +180,79 @@ namespace hnsw {
             candidates.emplace(dist_from_en, start_node_id);
             top_candidates.emplace(dist_from_en, start_node_id);
 
-            // Get neighbor IDs for current layer
-            vector<int> neighbor_ids;
-            for (const auto& neighbor : layers[l_c][start_node_id].neighbors) {
-                neighbor_ids.push_back(neighbor.id);
-            }
+            while (!candidates.empty()) {
+                const auto nearest_candidate = candidates.top();
+                const auto& nearest_candidate_node = layers[l_c][nearest_candidate.id];
+                candidates.pop();
 
-            if (!neighbor_ids.empty()) {
-                cout << "Starting search" << endl;
-                int num_neighbors = neighbor_ids.size();
-                float* d_distances;
-                int* d_node_ids;
-                float* d_query;
+                if (nearest_candidate.dist > top_candidates.top().dist) break;
 
-                // Allocate and copy query data
-                CUDA_CHECK(cudaMalloc(&d_query, query.x.size() * sizeof(float)));
-                CUDA_CHECK(cudaMemcpy(d_query, query.x.data(), query.x.size() * sizeof(float), cudaMemcpyHostToDevice));
-
-                // Allocate memory for distances and node IDs
-                CUDA_CHECK(cudaMalloc(&d_distances, num_neighbors * sizeof(float)));
-                CUDA_CHECK(cudaMalloc(&d_node_ids, num_neighbors * sizeof(int)));
-                CUDA_CHECK(cudaMemcpy(d_node_ids, neighbor_ids.data(), num_neighbors * sizeof(int), cudaMemcpyHostToDevice));
-                
-                cout << "Successfully allocated" << endl;
-
-                // Launch kernel
-                int blockSize = 256;
-                int numBlocks = (num_neighbors + blockSize - 1) / blockSize;
-                calculateDistances<<<numBlocks, blockSize>>>(
-                    d_query, 
-                    d_dataset.vectors,  // Make sure this is properly initialized in build()
-                    d_node_ids, 
-                    d_distances, 
-                    query.x.size(),     // dimension
-                    num_neighbors
-                );
-
-                CUDA_CHECK(cudaGetLastError());
-                CUDA_CHECK(cudaDeviceSynchronize());
-                cout << "Successfully synced" << endl;
-
-                // Copy results back
-                vector<float> distances(num_neighbors);
-                CUDA_CHECK(cudaMemcpy(distances.data(), d_distances, num_neighbors * sizeof(float), cudaMemcpyDeviceToHost));
-                cout << "Successfully copied" << endl;
-
-                // Update result with calculated distances
-                for (int i = 0; i < num_neighbors; i++) {
-                    result.result.emplace_back(distances[i], neighbor_ids[i]);
+                // Get neighbors of current candidate
+                vector<int> neighbor_ids;
+                for (const auto& neighbor : nearest_candidate_node.neighbors) {
+                    if (!visited[neighbor.id]) {
+                        neighbor_ids.push_back(neighbor.id);
+                        visited[neighbor.id] = true;
+                    }
                 }
 
-                // Free device memory
-                CUDA_CHECK(cudaFree(d_query));
-                CUDA_CHECK(cudaFree(d_distances));
-                CUDA_CHECK(cudaFree(d_node_ids));
+                if (!neighbor_ids.empty()) {
+                    // Allocate memory for distances calculation
+                    float* d_distances;
+                    int* d_node_ids;
+                    CUDA_CHECK(cudaMalloc(&d_distances, neighbor_ids.size() * sizeof(float)));
+                    CUDA_CHECK(cudaMalloc(&d_node_ids, neighbor_ids.size() * sizeof(int)));
+                    CUDA_CHECK(cudaMemcpy(d_node_ids, neighbor_ids.data(), neighbor_ids.size() * sizeof(int), cudaMemcpyHostToDevice));
+
+                    // Calculate distances for all neighbors
+                    int blockSize = 256;
+                    int numBlocks = (neighbor_ids.size() + blockSize - 1) / blockSize;
+                    calculateDistances<<<numBlocks, blockSize>>>(
+                        d_query,
+                        d_dataset.vectors,
+                        d_node_ids,
+                        d_distances,
+                        query.x.size(),
+                        neighbor_ids.size()
+                    );
+
+                    // Check for kernel errors
+                    CUDA_CHECK(cudaGetLastError());
+                    CUDA_CHECK(cudaDeviceSynchronize());
+
+                    // Get results
+                    vector<float> distances(neighbor_ids.size());
+                    CUDA_CHECK(cudaMemcpy(distances.data(), d_distances, neighbor_ids.size() * sizeof(float), cudaMemcpyDeviceToHost));
+
+                    // Update candidates and top_candidates
+                    for (size_t i = 0; i < neighbor_ids.size(); i++) {
+                        float dist = distances[i];
+                        int id = neighbor_ids[i];
+
+                        if (dist < top_candidates.top().dist || top_candidates.size() < ef) {
+                            candidates.emplace(dist, id);
+                            top_candidates.emplace(dist, id);
+
+                            if (top_candidates.size() > ef) top_candidates.pop();
+                        }
+                    }
+
+                    // Cleanup
+                    CUDA_CHECK(cudaFree(d_distances));
+                    CUDA_CHECK(cudaFree(d_node_ids));
+                }
             }
 
+            // Cleanup query memory
+            CUDA_CHECK(cudaFree(d_query));
+
+            // Build result
             while (!top_candidates.empty()) {
                 result.result.emplace_back(top_candidates.top());
                 top_candidates.pop();
             }
 
             reverse(result.result.begin(), result.result.end());
-
             return result;
         }
 
