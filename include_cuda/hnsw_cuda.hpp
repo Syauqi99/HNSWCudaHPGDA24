@@ -9,6 +9,8 @@
 #include <cstdlib> // For exit
 #include <iostream>
 
+#define MAX_DIM 128  // Adjust based on your maximum dimension
+
 #define CUDA_CHECK(call) do { \
     cudaError_t err = call; \
     if (err != cudaSuccess) { \
