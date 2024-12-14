@@ -162,7 +162,7 @@ namespace hnsw {
         }
 
         auto search_layer_cuda(const Data<>& query, int start_node_id, int ef, int l_c) {
-            cout << "Starting search" << endl;
+            //cout << "Starting search" << endl;
             auto result = SearchResult();
             vector<bool> visited(dataset.size(), false);
             visited[start_node_id] = true;
@@ -182,7 +182,6 @@ namespace hnsw {
             top_candidates.emplace(dist_from_en, start_node_id);
 
             while (!candidates.empty()) {
-                cout << "While loop" << endl;
                 const auto nearest_candidate = candidates.top();
                 const auto& nearest_candidate_node = layers[l_c][nearest_candidate.id];
                 candidates.pop();
@@ -205,7 +204,7 @@ namespace hnsw {
                     CUDA_CHECK(cudaMalloc(&d_distances, neighbor_ids.size() * sizeof(float)));
                     CUDA_CHECK(cudaMalloc(&d_node_ids, neighbor_ids.size() * sizeof(int)));
                     CUDA_CHECK(cudaMemcpy(d_node_ids, neighbor_ids.data(), neighbor_ids.size() * sizeof(int), cudaMemcpyHostToDevice));
-                    cout << "Copying to device" << endl;
+                    //cout << "Copying to device" << endl;
 
                     // Calculate distances for all neighbors
                     int blockSize = 256;
@@ -218,16 +217,16 @@ namespace hnsw {
                         query.x.size(),
                         d_dataset.num_vectors  // Pass the total number of vectors
                     );
-                    cout << "Kernel launched" << endl;
+                    //cout << "Kernel launched" << endl;
                     // Check for kernel errors
                     CUDA_CHECK(cudaGetLastError());
                     CUDA_CHECK(cudaDeviceSynchronize());
-                    cout << "Kernel finished" << endl;
+                    //cout << "Kernel finished" << endl;
 
                     // Get results
                     vector<float> distances(neighbor_ids.size());
                     CUDA_CHECK(cudaMemcpy(distances.data(), d_distances, neighbor_ids.size() * sizeof(float), cudaMemcpyDeviceToHost));
-                    cout << "Memcpy finished" << endl;
+                    //cout << "Memcpy finished" << endl;
 
                     // Update candidates and top_candidates
                     for (size_t i = 0; i < neighbor_ids.size(); i++) {
@@ -418,13 +417,13 @@ namespace hnsw {
         }
 
         auto knn_search_cuda(const Data<>& query, int k, int ef) {
-            std::cout << "running" << std::endl;
+            //std::cout << "running" << std::endl;
 
             SearchResult result;
-            std::cout << "running result " << std::endl;
+            //std::cout << "running result " << std::endl;
             // search in upper layers
             auto start_id_layer = enter_node_id;
-            std::cout << "start id layer" << std::endl;
+            //std::cout << "start id layer" << std::endl;
 
             for (int l_c = enter_node_level; l_c >= 1; --l_c) {
                 std::cout << "Before calling search_layer" << std::endl;
