@@ -40,17 +40,26 @@ namespace hnsw {
     __global__ void calculateDistances(const float* query, const float* vectors, const int* node_ids, 
                                          float* distances, int dim, int num_neighbors) {
         int idx = blockIdx.x * blockDim.x + threadIdx.x;
-        if (idx < num_neighbors) {
-            float distance = 0.0f;
-            int node_id = node_ids[idx];
-            
-            // Calculate Euclidean distance
-            for (int i = 0; i < dim; i++) {
-                float diff = vectors[node_id * dim + i] - query[i];
-                distance += diff * diff;
-            }
-            distances[idx] = sqrtf(distance);
+        
+        // Boundary check - CORRECT
+        if (idx >= num_neighbors) return;
+        
+        float distance = 0.0f;
+        int node_id = node_ids[idx];
+        
+        // Node validation - CORRECT
+        if (node_id < 0) {
+            distances[idx] = INFINITY;
+            return;
         }
+        
+        // Distance calculation - CORRECT
+        for (int i = 0; i < dim; i++) {
+            float diff = vectors[node_id * dim + i] - query[i];
+            distance += diff * diff;
+        }
+        
+        distances[idx] = sqrtf(distance);
     }
 
     struct Node {
