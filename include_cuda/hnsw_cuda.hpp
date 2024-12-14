@@ -38,24 +38,26 @@ namespace hnsw {
 
     // Improved CUDA kernel
     __global__ void calculateDistances(const float* query, const float* vectors, const int* node_ids, 
-                                         float* distances, int dim, int num_neighbors) {
+                                         float* distances, int dim, int num_vectors) {
         int idx = blockIdx.x * blockDim.x + threadIdx.x;
         
-        // Boundary check - CORRECT
-        if (idx >= num_neighbors) return;
+        // Boundary check for thread index
+        if (idx >= num_vectors) return;
         
         float distance = 0.0f;
         int node_id = node_ids[idx];
         
-        // Node validation - CORRECT
-        if (node_id < 0) {
+        // Validate node_id and array bounds
+        if (node_id < 0 || node_id >= num_vectors) {
             distances[idx] = INFINITY;
             return;
         }
         
-        // Distance calculation - CORRECT
-        for (int i = 0; i < dim; i++) {
-            float diff = vectors[node_id * dim + i] - query[i];
+        // Safe distance calculation with bounds checking
+        for (int i = 0; i < dim && i < MAX_DIM; i++) {  // Add MAX_DIM as safety
+            float vec_val = vectors[node_id * dim + i];
+            float query_val = query[i];
+            float diff = vec_val - query_val;
             distance += diff * diff;
         }
         
