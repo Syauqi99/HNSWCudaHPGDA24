@@ -20,7 +20,7 @@ int main() {
       base_dir + "datasets/siftsmall/siftsmall_query.fvecs";
   const string ground_truth_path =
       base_dir + "datasets/siftsmall/siftsmall_groundtruth.ivecs";
-  const int n = 10000, n_query = 100;
+  const int n = 1000, n_query = 1;
 
   // // SIFT1M (normal) - 1,000,000	base / 10,000 query / 128 dim
   // const string data_path = base_dir + "datasets/sift/sift_base.fvecs";
