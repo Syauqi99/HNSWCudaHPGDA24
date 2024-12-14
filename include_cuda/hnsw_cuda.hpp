@@ -426,7 +426,7 @@ namespace hnsw {
             //std::cout << "start id layer" << std::endl;
 
             for (int l_c = enter_node_level; l_c >= 1; --l_c) {
-                std::cout << "Before calling search_layer" << std::endl;
+                //std::cout << "Before calling search_layer" << std::endl;
                 const auto result_layer = search_layer_cuda(query, start_id_layer, 1, l_c);
                 const auto& nn_id_layer = result_layer.result[0].id;
                 start_id_layer = nn_id_layer;
@@ -435,7 +435,7 @@ namespace hnsw {
             const auto& nn_upper_layer = layers[1][start_id_layer];
 
             // search in base layer
-            std::cout << "Before calling search_layer 2" << std::endl;
+            //std::cout << "Before calling search_layer 2" << std::endl;
             const auto result_layer = search_layer_cuda(query, start_id_layer, ef, 0);
             const auto candidates = result_layer.result;
             for (const auto& candidate : candidates) {
