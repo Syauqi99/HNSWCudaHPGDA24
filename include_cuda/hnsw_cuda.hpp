@@ -7,13 +7,14 @@
 #include <cuda_runtime.h>
 #include <cstdio>  // For fprintf
 #include <cstdlib> // For exit
+#include <iostream>
 
 #define CUDA_CHECK(call) do { \
     cudaError_t err = call; \
     if (err != cudaSuccess) { \
-        fprintf(stderr, "CUDA error in %s:%d: %s\n", \
-                __FILE__, __LINE__, cudaGetErrorString(err)); \
-        exit(EXIT_FAILURE); \
+        std::cerr << "CUDA error in " << __FILE__ << ":" << __LINE__ << ": " \
+                  << cudaGetErrorString(err) << std::endl; \
+        exit(err); \
     } \
 } while(0)
 
@@ -36,23 +37,15 @@ namespace hnsw {
     };
 
     // Improved CUDA kernel
-    __global__ void calculateDistances(const float* query_vector, 
-                                     const float* node_vectors,
-                                     const int* node_ids,
-                                     float* distances,
-                                     int vector_dim,
-                                     int num_nodes) {
+    __global__ void calculateDistancesKernel(float* d_data, float* d_query, float* d_distances, int numVectors, int dim) {
         int idx = blockIdx.x * blockDim.x + threadIdx.x;
-        if (idx < num_nodes) {
-            float dist = 0.0f;
-            const float* node_vector = node_vectors + node_ids[idx] * vector_dim;
-            
-            // Compute Euclidean distance
-            for (int d = 0; d < vector_dim; d++) {
-                float diff = query_vector[d] - node_vector[d];
-                dist += diff * diff;
+        if (idx < numVectors) {
+            float distance = 0.0f;
+            for (int i = 0; i < dim; ++i) {
+                float diff = d_data[idx * dim + i] - d_query[i];
+                distance += diff * diff;
             }
-            distances[idx] = sqrtf(dist);
+            d_distances[idx] = sqrt(distance);
         }
     }
 
@@ -165,8 +158,6 @@ namespace hnsw {
             priority_queue<Neighbor, vector<Neighbor>, CompGreater> candidates;
             priority_queue<Neighbor, vector<Neighbor>, CompLess> top_candidates;
 
-            cout << "layers[l_c][start_node_id]" << endl;
-
             const auto& start_node = layers[l_c][start_node_id];
             const auto dist_from_en = calc_dist(query, start_node.data);
 
@@ -191,27 +182,36 @@ namespace hnsw {
                 int num_neighbors = neighbor_ids.size();
                 float* d_distances;
                 int* d_node_ids;
+                float* d_query;  // Add device pointer for query
 
-                // check print succesfully allocation
+                // Allocate and copy query data
+                CUDA_CHECK(cudaMalloc(&d_query, query.x.size() * sizeof(float)));
+                CUDA_CHECK(cudaMemcpy(d_query, query.x.data(), query.x.size() * sizeof(float), cudaMemcpyHostToDevice));
+
+                // Allocate and copy neighbor IDs
                 CUDA_CHECK(cudaMalloc(&d_distances, num_neighbors * sizeof(float)));
                 CUDA_CHECK(cudaMalloc(&d_node_ids, num_neighbors * sizeof(int)));
                 CUDA_CHECK(cudaMemcpy(d_node_ids, neighbor_ids.data(), num_neighbors * sizeof(int), cudaMemcpyHostToDevice));
-                // check print succesfully allocation
                 cout << "Successfully allocated" << endl;
 
+                // Launch kernel with device pointer for query
                 int blockSize = 256;
                 int numBlocks = (num_neighbors + blockSize - 1) / blockSize;
-                calculateDistances<<<numBlocks, blockSize>>>(query.x.data(), d_dataset.vectors, d_node_ids, d_distances, query.x.size(), num_neighbors);
+                calculateDistances<<<numBlocks, blockSize>>>(d_query, d_dataset.vectors, d_node_ids, d_distances, query.x.size(), num_neighbors);
+
+                CUDA_CHECK(cudaGetLastError());  // Add error check for kernel launch
                 CUDA_CHECK(cudaDeviceSynchronize());
-                // check print succesfully sync
                 cout << "Successfully synced" << endl;
 
-
+                // Copy results back
                 vector<float> distances(num_neighbors);
                 CUDA_CHECK(cudaMemcpy(distances.data(), d_distances, num_neighbors * sizeof(float), cudaMemcpyDeviceToHost));
-                // check print succesfully copy
                 cout << "Successfully copied" << endl;
 
+                // Free device memory
+                CUDA_CHECK(cudaFree(d_query));
+                CUDA_CHECK(cudaFree(d_distances));
+                CUDA_CHECK(cudaFree(d_node_ids));
 
                 for (int i = 0; i < num_neighbors; ++i) {
                     if (distances[i] < top_candidates.top().dist || top_candidates.size() < ef) {
@@ -221,11 +221,6 @@ namespace hnsw {
                         if (top_candidates.size() > ef) top_candidates.pop();
                     }
                 }
-
-                CUDA_CHECK(cudaFree(d_distances));
-                CUDA_CHECK(cudaFree(d_node_ids));
-                // check print succesfully free
-                cout << "Successfully freed" << endl;
             }
 
             while (!top_candidates.empty()) {
