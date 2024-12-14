@@ -154,6 +154,7 @@ namespace hnsw {
         }
 
         auto search_layer_cuda(const Data<>& query, int start_node_id, int ef, int l_c) {
+            cout << "Running search_layer" << endl;
             printf("Running search_layer\n");
             
             auto result = SearchResult();
