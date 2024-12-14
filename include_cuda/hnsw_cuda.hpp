@@ -154,8 +154,7 @@ namespace hnsw {
         }
 
         auto search_layer_cuda(const Data<>& query, int start_node_id, int ef, int l_c) {
-            // print running search_layer
-            cout << "running search_layer" << endl;
+            printf("Running search_layer\n");
             
             auto result = SearchResult();
 
@@ -185,8 +184,7 @@ namespace hnsw {
                     neighbor_ids.push_back(neighbor.id);
                 }
 
-                // check print starting search
-                cout << "starting search" << endl;
+                printf("Starting search\n");
                 int num_neighbors = neighbor_ids.size();
                 float* d_distances;
                 int* d_node_ids;
@@ -196,20 +194,20 @@ namespace hnsw {
                 CUDA_CHECK(cudaMalloc(&d_node_ids, num_neighbors * sizeof(int)));
                 CUDA_CHECK(cudaMemcpy(d_node_ids, neighbor_ids.data(), num_neighbors * sizeof(int), cudaMemcpyHostToDevice));
                 // check print succesfully allocation
-                cout << "succesfully allocated" << endl;
+                printf("Successfully allocated\n");
 
                 int blockSize = 256;
                 int numBlocks = (num_neighbors + blockSize - 1) / blockSize;
                 calculateDistances<<<numBlocks, blockSize>>>(query.x.data(), d_dataset.vectors, d_node_ids, d_distances, query.x.size(), num_neighbors);
                 CUDA_CHECK(cudaDeviceSynchronize());
                 // check print succesfully sync
-                cout << "succesfully sync" << endl; 
+                printf("Successfully synced\n"); 
 
 
                 vector<float> distances(num_neighbors);
                 CUDA_CHECK(cudaMemcpy(distances.data(), d_distances, num_neighbors * sizeof(float), cudaMemcpyDeviceToHost));
                 // check print succesfully copy
-                cout << "succesfully copy" << endl;
+                printf("Successfully copied\n");
 
 
                 for (int i = 0; i < num_neighbors; ++i) {
@@ -224,7 +222,7 @@ namespace hnsw {
                 CUDA_CHECK(cudaFree(d_distances));
                 CUDA_CHECK(cudaFree(d_node_ids));
                 // check print succesfully free
-                cout << "succesfully free" << endl;
+                printf("Successfully freed\n");
             }
 
             while (!top_candidates.empty()) {
@@ -378,6 +376,7 @@ namespace hnsw {
         }
 
         void build(const Dataset<>& dataset_) {
+            printf("Building index...\n");
             // Ensure you have the correct dimension access
             int dim = dataset_[0].x.size();
             cudaMalloc(&d_dataset.vectors, dataset_.size() * dim * sizeof(float));
@@ -385,12 +384,13 @@ namespace hnsw {
         }
 
         auto knn_search_cuda(const Data<>& query, int k, int ef) {
-            cout << "running knn_search_cuda" << endl;
-
+            printf("Running knn_search_cuda\n");
+            printf("start_id_layer: %d\n", start_id_layer);
+            
             SearchResult result;
             // search in upper layers
             auto start_id_layer = enter_node_id;
-            cout << "start_id_layer: " << start_id_layer << endl;
+            printf("start_id_layer: %d\n", start_id_layer);
             
             for (int l_c = enter_node_level; l_c >= 1; --l_c) {
                 std::cout << "Before calling search_layer" << std::endl;
