@@ -398,11 +398,6 @@ namespace hnsw {
                 const auto& nn_id_layer = result_layer.result[0].id;
                 start_id_layer = nn_id_layer;
             }
-
-            std::cout << "before calling nn_upper_layer" << std::endl;
-
-            const auto& nn_upper_layer = layers[1][start_id_layer];
-
             // search in base layer
             std::cout << "Before calling search_layer 2" << std::endl;
             const auto result_layer = search_layer_cuda(query, start_id_layer, ef, 0);
