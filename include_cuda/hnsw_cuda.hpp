@@ -40,17 +40,17 @@ namespace hnsw {
 
     // Improved CUDA kernel
     __global__ void calculateDistances(const float* query, const float* vectors, const int* node_ids, 
-                                         float* distances, int dim, int num_neighbors) {
+                                         float* distances, int dim, int total_vectors) {
         int idx = blockIdx.x * blockDim.x + threadIdx.x;
         
         // Boundary check for thread index
-        if (idx >= num_neighbors) return;
+        if (idx >= total_vectors) return;
         
         float distance = 0.0f;
         int node_id = node_ids[idx];
         
         // Validate node_id and array bounds
-        if (node_id < 0 || node_id >= num_neighbors) {
+        if (node_id < 0 || node_id >= total_vectors) {
             distances[idx] = INFINITY;
             return;
         }
@@ -162,6 +162,7 @@ namespace hnsw {
         }
 
         auto search_layer_cuda(const Data<>& query, int start_node_id, int ef, int l_c) {
+            cout << "Starting search" << endl;
             auto result = SearchResult();
             vector<bool> visited(dataset.size(), false);
             visited[start_node_id] = true;
@@ -181,6 +182,7 @@ namespace hnsw {
             top_candidates.emplace(dist_from_en, start_node_id);
 
             while (!candidates.empty()) {
+                cout << "While loop" << endl;
                 const auto nearest_candidate = candidates.top();
                 const auto& nearest_candidate_node = layers[l_c][nearest_candidate.id];
                 candidates.pop();
@@ -203,6 +205,7 @@ namespace hnsw {
                     CUDA_CHECK(cudaMalloc(&d_distances, neighbor_ids.size() * sizeof(float)));
                     CUDA_CHECK(cudaMalloc(&d_node_ids, neighbor_ids.size() * sizeof(int)));
                     CUDA_CHECK(cudaMemcpy(d_node_ids, neighbor_ids.data(), neighbor_ids.size() * sizeof(int), cudaMemcpyHostToDevice));
+                    cout << "Copying to device" << endl;
 
                     // Calculate distances for all neighbors
                     int blockSize = 256;
@@ -213,16 +216,18 @@ namespace hnsw {
                         d_node_ids,
                         d_distances,
                         query.x.size(),
-                        neighbor_ids.size()
+                        d_dataset.num_vectors  // Pass the total number of vectors
                     );
-
+                    cout << "Kernel launched" << endl;
                     // Check for kernel errors
                     CUDA_CHECK(cudaGetLastError());
                     CUDA_CHECK(cudaDeviceSynchronize());
+                    cout << "Kernel finished" << endl;
 
                     // Get results
                     vector<float> distances(neighbor_ids.size());
                     CUDA_CHECK(cudaMemcpy(distances.data(), d_distances, neighbor_ids.size() * sizeof(float), cudaMemcpyDeviceToHost));
+                    cout << "Memcpy finished" << endl;
 
                     // Update candidates and top_candidates
                     for (size_t i = 0; i < neighbor_ids.size(); i++) {
