@@ -7,7 +7,7 @@ using namespace utils;
 using namespace hnsw;
 
 int main() {
-  const string base_dir = "C:/Users/Recup/OneDrive/Documentos/Contest/hpgda_contest_MM/";
+  const string base_dir = "/content/hpgda_contest_MM/";
 
   int k = 100;
   int m = 16;
