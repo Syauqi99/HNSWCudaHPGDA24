@@ -160,55 +160,6 @@ namespace hnsw {
         int get_new_node_level() {
             return static_cast<int>(-log(unif_dist(engine)) * m_l);
         }
-        
-        auto search_layer(const Data<>& query, int start_node_id, int ef, int l_c) {
-            auto result = SearchResult();
-
-            vector<bool> visited(dataset.size());
-            visited[start_node_id] = true;
-
-            priority_queue<Neighbor, vector<Neighbor>, CompGreater> candidates;
-            priority_queue<Neighbor, vector<Neighbor>, CompLess> top_candidates;
-
-            const auto& start_node = layers[l_c][start_node_id];
-            const auto dist_from_en = calc_dist(query, start_node.data);
-
-            candidates.emplace(dist_from_en, start_node_id);
-            top_candidates.emplace(dist_from_en, start_node_id);
-
-            while (!candidates.empty()) {
-                const auto nearest_candidate = candidates.top();
-                const auto& nearest_candidate_node = layers[l_c][nearest_candidate.id];
-                candidates.pop();
-
-                if (nearest_candidate.dist > top_candidates.top().dist) break;
-
-                for (const auto neighbor : nearest_candidate_node.neighbors) {
-                    if (visited[neighbor.id]) continue;
-                    visited[neighbor.id] = true;
-
-                    const auto& neighbor_node = layers[l_c][neighbor.id];
-                    const auto dist_from_neighbor = calc_dist(query, neighbor_node.data);
-
-                    if (dist_from_neighbor < top_candidates.top().dist ||
-                        top_candidates.size() < ef) {
-                        candidates.emplace(dist_from_neighbor, neighbor.id);
-                        top_candidates.emplace(dist_from_neighbor, neighbor.id);
-
-                        if (top_candidates.size() > ef) top_candidates.pop();
-                    }
-                }
-            }
-
-            while (!top_candidates.empty()) {
-                result.result.emplace_back(top_candidates.top());
-                top_candidates.pop();
-            }
-
-            reverse(result.result.begin(), result.result.end());
-
-            return result;
-        }
 
         auto search_layer_cuda(const Data<>& query, int start_node_id, int ef, int l_c) {
             //cout << "Starting search" << endl;
@@ -237,16 +188,16 @@ namespace hnsw {
 
                 if (nearest_candidate.dist > top_candidates.top().dist) break;
 
-                // Get neighbors of current candidate
-                vector<int> neighbor_ids;
-                for (const auto& neighbor : nearest_candidate_node.neighbors) {
-                    if (!visited[neighbor.id]) {
-                        neighbor_ids.push_back(neighbor.id);
-                        visited[neighbor.id] = true;
-                    }
-                }
-
                 if (!neighbor_ids.empty()) {
+                    // Get neighbors of current candidate
+                    vector<int> neighbor_ids;
+                    for (const auto& neighbor : nearest_candidate_node.neighbors) {
+                        if (!visited[neighbor.id]) {
+                            neighbor_ids.push_back(neighbor.id);
+                            visited[neighbor.id] = true;
+                        }
+                    }
+                    
                     // Allocate memory for distances calculation
                     float* d_distances;
                     int* d_node_ids;
@@ -384,7 +335,7 @@ namespace hnsw {
             auto start_node_id = enter_node_id;
             for (int l_c = enter_node_level; l_c > l_new_node; --l_c) {
                 // get the nearest neighbour node to the new node in the current layer 
-                const auto nn_layer = search_layer(new_data, start_node_id, 1, l_c).result[0];
+                const auto nn_layer = search_layer_cuda(new_data, start_node_id, 1, l_c).result[0];
                 start_node_id = nn_layer.id;
             }
             // when the previous cycle ends, we have that start_node_id == entry point node in the layer where we want to add the new node
@@ -396,7 +347,7 @@ namespace hnsw {
                 // neighbors will be populated with the nearest neighbors nodes (and corresponding distances) to the new_data node
                 // the entry_point for computing the NN nodes is start_node_id which is the result of the 
                 // previous greedy search from the top layer to the current one
-                auto neighbors = search_layer(new_data, start_node_id, ef_construction, l_c).result;
+                auto neighbors = search_layer_cuda(new_data, start_node_id, ef_construction, l_c).result;
 
                 // if the NN list is greater than M, filter them out with an heuristic
                 if (neighbors.size() > m)
