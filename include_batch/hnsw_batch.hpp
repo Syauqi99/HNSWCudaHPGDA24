@@ -69,6 +69,30 @@ namespace hnsw {
         }
     };
 
+    __global__ void calculateDistances(
+        const float* query,
+        const float* all_vectors,
+        const int* indices,
+        float* distances,
+        int dim,
+        int num_neighbors
+    ) {
+        int idx = blockIdx.x * blockDim.x + threadIdx.x;
+        if (idx >= num_neighbors) return;
+        
+        int vector_idx = indices[idx];
+        float distance = 0.0f;
+        
+        // Access vectors using correct stride
+        const float* vector = all_vectors + (vector_idx * dim);
+        for (int i = 0; i < dim; i++) {
+            float diff = vector[i] - query[i];
+            distance += diff * diff;
+        }
+        
+        distances[idx] = sqrtf(distance);
+    }
+
     struct HNSW {
         const int m, m_max_0, ef_construction;
         const double m_l;
