@@ -2,7 +2,7 @@
 #define HNSW_CUDA_HPP
 
 #include <queue>
-#include <utils_cuda.hpp>
+#include <utils_pinned.hpp>
 #include <random>
 #include <cuda_runtime.h>
 #include <cstdio>  // For fprintf
