@@ -24,7 +24,7 @@ int main() {
     const auto ground_truth = load_ivec(ground_truth_path, n_query, k);
 
     const auto start = get_now();
-    auto index = HSNWPinned(m, ef_construction);
+    auto index = HNSWPinned(m, ef_construction);
     index.build(dataset);
     const auto end = get_now();
     const auto build_time = get_duration(start, end);
