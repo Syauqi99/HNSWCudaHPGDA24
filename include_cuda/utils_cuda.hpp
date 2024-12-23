@@ -1,5 +1,5 @@
-#ifndef UTILS_HPP
-#define UTILS_HPP
+#ifndef UTILS_CUDA_HPP
+#define UTILS_CUDA_HPP
 
 #include <iostream>
 #include <vector>

@@ -1,5 +1,5 @@
-#include <hnsw.hpp>
-#include <utils.hpp>
+#include <hnsw_cuda.hpp>
+#include <utils_cuda.hpp>
 
 #define REPETITIONS 1
 
@@ -7,7 +7,7 @@ using namespace utils;
 using namespace hnsw;
 
 int main() {
-  const string base_dir = "/content/hpgda_contest_MM/";
+    const string base_dir = "/content/hpgda_contest_MM/";
 
   int k = 100;
   int m = 16;
@@ -34,7 +34,7 @@ int main() {
   const auto ground_truth = load_ivec(ground_truth_path, n_query, k);
 
   const auto start = get_now();
-  auto index = HNSW(m, ef_construction);
+  auto index = HNSWCuda(m, ef_construction);
   index.build(dataset);
   const auto end = get_now();
   const auto build_time = get_duration(start, end);
@@ -49,7 +49,7 @@ int main() {
       const auto& query = queries[i];
 
       auto q_start = get_now();
-      auto result = index.knn_search(query, k, ef);
+      auto result = index.knn_search_cuda(query, k, ef);
       auto q_end = get_now();
       total_queries += get_duration(q_start, q_end);
 
@@ -63,7 +63,7 @@ int main() {
   const string save_name =
       "k" + to_string(k) + "-m" + to_string(m) + "-ef" + to_string(ef) + ".csv";
   const string result_base_dir = base_dir + "results/";
-  const string log_path = result_base_dir + "log-" + save_name;
-  const string result_path = result_base_dir + "result-" + save_name;
+  const string log_path = result_base_dir + "logcuda-" + save_name;
+  const string result_path = result_base_dir + "resultcuda-" + save_name;
   results.save(log_path, result_path);
-}
+} 
