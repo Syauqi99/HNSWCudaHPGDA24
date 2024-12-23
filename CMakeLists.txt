@@ -8,7 +8,7 @@ set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
 # Add the include directories
-include_directories(include include_cuda include_batch include_stream include_vectors include_allocation)
+include_directories(include include_cuda include_batch include_stream include_vectors include_allocation include_pinned)
 
 # Enable CUDA language
 enable_language(CUDA)
