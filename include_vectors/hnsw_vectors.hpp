@@ -107,7 +107,7 @@ namespace hnsw {
         int num_vectors;
     };
 
-    struct HNSWStream {
+    struct HNSWVectors {
         const int m, m_max_0, ef_construction;
         const double m_l;
         const bool extend_candidates, keep_pruned_connections;
@@ -136,7 +136,7 @@ namespace hnsw {
         GpuData d_dataset;
         vector<GpuNode> d_nodes;
 
-        HNSWStream(int m, int ef_construction = 64, bool extend_candidates = false, bool keep_pruned_connections = true) :
+        HNSWVectors(int m, int ef_construction = 64, bool extend_candidates = false, bool keep_pruned_connections = true) :
                 m(m), m_max_0(m * 2), m_l(1 / log(1.0 * m)),
                 enter_node_id(-1), enter_node_level(-1),
                 ef_construction(ef_construction),
@@ -158,7 +158,7 @@ namespace hnsw {
             d_dataset = {nullptr, 0, 0};
         }
 
-        ~HNSWStream() {
+        ~HNSWVectors() {
             // Cleanup GPU resources
             if (d_dataset.vectors) {
                 CUDA_CHECK(cudaFree(d_dataset.vectors));

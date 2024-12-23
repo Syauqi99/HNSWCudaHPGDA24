@@ -123,7 +123,7 @@ namespace hnsw {
         }
     };
 
-    struct HNSWCuda {
+    struct HNSWPinned {
         const int m, m_max_0, ef_construction;
         const double m_l;
         const bool extend_candidates, keep_pruned_connections;
@@ -157,7 +157,7 @@ namespace hnsw {
         int vector_dim;
         int total_vectors;
 
-        HNSWCuda(int m, int ef_construction = 64, bool extend_candidates = false, bool keep_pruned_connections = true) :
+        HNSWPinned(int m, int ef_construction = 64, bool extend_candidates = false, bool keep_pruned_connections = true) :
                 m(m), m_max_0(m * 2), m_l(1 / log(1.0 * m)),
                 enter_node_id(-1), enter_node_level(-1),
                 ef_construction(ef_construction),
@@ -174,7 +174,7 @@ namespace hnsw {
             CUDA_CHECK(cudaMalloc(&d_distances_buffer, BATCH_SIZE * sizeof(float)));
         }
 
-        ~HNSWCuda() {
+        ~HNSWPinned() {
             if (d_all_vectors) {
                 CUDA_CHECK(cudaFree(d_all_vectors));
             }
