@@ -91,7 +91,7 @@ namespace hnsw {
         distances[idx] = sqrtf(distance);
     }
 
-    struct HNSW {
+    struct HSNWBatch {
         const int m, m_max_0, ef_construction;
         const double m_l;
         const bool extend_candidates, keep_pruned_connections;
@@ -106,7 +106,7 @@ namespace hnsw {
         mt19937 engine;
         uniform_real_distribution<double> unif_dist;
 
-        HNSW(int m, int ef_construction = 64, bool extend_candidates = false, bool keep_pruned_connections = true) :
+        HSNWBatch(int m, int ef_construction = 64, bool extend_candidates = false, bool keep_pruned_connections = true) :
                 m(m), m_max_0(m * 2), m_l(1 / log(1.0 * m)),
                 enter_node_id(-1), enter_node_level(-1),
                 ef_construction(ef_construction),
