@@ -9,6 +9,8 @@
 #include <cstdlib> // For exit
 #include <iostream>
 
+#define MAX_DIM 128  // Adjust based on your maximum dimension
+
 #define CUDA_CHECK(call) do { \
     cudaError_t err = call; \
     if (err != cudaSuccess) { \
@@ -149,7 +151,6 @@ namespace hnsw {
         float* d_distances_buffer;
         size_t buffer_size;
         const int BATCH_SIZE = 1024;  // Move BATCH_SIZE as class member
-        #define MAX_DIM 128  // Adjust based on your maximum dimension
 
         // Add new member for storing all vectors
         float* d_all_vectors;
