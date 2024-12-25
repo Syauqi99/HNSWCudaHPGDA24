@@ -71,6 +71,7 @@ int main(int argc, char* argv[]) {
         }
         total_query_times.push_back(total_queries);
     }
+    long total_queries = std::accumulate(total_query_times.begin(), total_query_times.end(), 0);
     cout << "time for " << repetitions * n_query << " queries: " << total_queries / 1000 << " [ms]" << endl;
 
     const string save_name = "k" + to_string(k) + "-m" + to_string(m) + "-ef" + to_string(ef) +
