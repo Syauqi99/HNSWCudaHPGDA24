@@ -41,15 +41,6 @@ namespace hnsw {
         int num_neighbors;
     };
 
-    struct GpuData {
-        float* vectors;  // [N * dim] contiguous array
-        int* ids;        // [N] parallel array of IDs
-        int* id_map;     // [N] mapping between index and original ID
-        size_t pitch;    // For proper alignment
-        int dimensions;
-        int num_vectors;
-    };
-
     __global__ void calculateDistances(
         const float* query,
         const float* all_vectors,
@@ -153,7 +144,6 @@ namespace hnsw {
         uniform_real_distribution<double> unif_dist;
 
         // Add GPU memory management
-        GpuData d_dataset;  // Device dataset
         vector<GpuNode> d_nodes;  // Device nodes
         
         // Add CUDA stream for async operations
@@ -168,6 +158,7 @@ namespace hnsw {
 
         // Add new member for storing all vectors
         float* d_all_vectors;
+        int* d_id_map;  // Rename from d_dataset.id_map for clarity
         int vector_dim;
         int total_vectors;
 
@@ -199,15 +190,14 @@ namespace hnsw {
             size_t pitch;
             CUDA_CHECK(cudaMallocPitch(&d_query_buffer, &pitch, 
                                       MAX_DIM * sizeof(float), 1));
-            d_dataset.pitch = pitch;
         }
 
         ~HNSWCuda() {
             if (d_all_vectors) {
                 CUDA_CHECK(cudaFree(d_all_vectors));
             }
-            if (d_dataset.id_map) {
-                CUDA_CHECK(cudaFree(d_dataset.id_map));
+            if (d_id_map) {
+                CUDA_CHECK(cudaFree(d_id_map));
             }
             CUDA_CHECK(cudaFree(d_query_buffer));
             CUDA_CHECK(cudaFree(d_distances_buffer));
@@ -285,7 +275,7 @@ namespace hnsw {
                         d_batch_indices,
                         d_batch_distances,
                         d_result_ids,
-                        d_dataset.id_map,  // Pass id_map to kernel
+                        d_id_map,  // Use renamed direct pointer
                         vector_dim,
                         batch_size
                     );
@@ -629,25 +619,27 @@ namespace hnsw {
             vector_dim = dataset_[0].x.size();
             total_vectors = dataset_.size();
             
-            // Allocate and copy all vectors and IDs to GPU
+            // Allocate GPU memory directly
             size_t total_size = total_vectors * vector_dim * sizeof(float);
             CUDA_CHECK(cudaMalloc(&d_all_vectors, total_size));
-            CUDA_CHECK(cudaMalloc(&d_dataset.id_map, total_vectors * sizeof(int)));
+            CUDA_CHECK(cudaMalloc(&d_id_map, total_vectors * sizeof(int)));
             
+            // Prepare host data with proper ID mapping
             vector<float> all_vectors;
-            vector<int> all_ids;
+            vector<int> id_map(total_vectors);
             all_vectors.reserve(total_vectors * vector_dim);
-            all_ids.reserve(total_vectors);
             
+            // Store vectors and create ID mapping
             for(int i = 0; i < dataset_.size(); i++) {
                 const auto& data = dataset_[i];
                 all_vectors.insert(all_vectors.end(), data.x.begin(), data.x.end());
-                all_ids.push_back(data.id);
+                id_map[i] = data.id;  // Map index to original ID
             }
             
+            // Copy to GPU
             CUDA_CHECK(cudaMemcpy(d_all_vectors, all_vectors.data(), 
                                  total_size, cudaMemcpyHostToDevice));
-            CUDA_CHECK(cudaMemcpy(d_dataset.id_map, all_ids.data(),
+            CUDA_CHECK(cudaMemcpy(d_id_map, id_map.data(),
                                  total_vectors * sizeof(int), cudaMemcpyHostToDevice));
 
             // Process in batches
