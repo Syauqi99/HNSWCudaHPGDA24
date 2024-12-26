@@ -473,29 +473,110 @@ namespace hnsw {
             }
         }
 
+        void batch_insert(const vector<Data<>>& batch) {
+            // Pre-compute levels for all nodes in batch
+            vector<int> node_levels(batch.size());
+            for (size_t i = 0; i < batch.size(); i++) {
+                node_levels[i] = get_new_node_level();
+            }
+            
+            int max_level = *max_element(node_levels.begin(), node_levels.end());
+            
+            // Process each node in batch
+            for (size_t i = 0; i < batch.size(); i++) {
+                const auto& new_data = batch[i];
+                int l_new_node = node_levels[i];
+                
+                // Register node in layer maps
+                for (int l_c = l_new_node; l_c >= 0; --l_c) {
+                    layer_map[l_c].emplace_back(new_data.id);
+                }
+                
+                // Navigate down through layers to find entry point
+                auto start_node_id = enter_node_id;
+                for (int l_c = enter_node_level; l_c > l_new_node; --l_c) {
+                    const auto nn_layer = search_layer_cuda(new_data, start_node_id, 1, l_c).result[0];
+                    start_node_id = nn_layer.id;
+                }
+                
+                // Process each layer
+                for (int l_c = min(enter_node_level, l_new_node); l_c >= 0; --l_c) {
+                    auto neighbors = search_layer_cuda(new_data, start_node_id, ef_construction, l_c).result;
+                    
+                    if (neighbors.size() > m) {
+                        neighbors = select_neighbors_heuristic(new_data, neighbors, m, l_c);
+                    }
+                    
+                    auto& layer = layers[l_c];
+                    for (const auto neighbor : neighbors) {
+                        if (neighbor.id == new_data.id) continue;
+                        
+                        auto& neighbor_node = layer[neighbor.id];
+                        layer[new_data.id].neighbors.emplace_back(neighbor);
+                        neighbor_node.neighbors.emplace_back(neighbor.dist, new_data.id);
+                        
+                        const auto m_max = l_c ? m : m_max_0;
+                        if (neighbor_node.neighbors.size() > m_max) {
+                            neighbor_node.neighbors = select_neighbors_heuristic(
+                                neighbor_node.data,
+                                neighbor_node.neighbors,
+                                m_max,
+                                l_c
+                            );
+                        }
+                    }
+                    
+                    if (l_c == 0) break;
+                    start_node_id = neighbors[0].id;
+                }
+                
+                // Update entry point if needed
+                if (l_new_node > enter_node_level) {
+                    enter_node_id = new_data.id;
+                    layers.resize(l_new_node + 1);
+                    for (int l_c = max(enter_node_level, 0); l_c <= l_new_node; ++l_c) {
+                        for (const auto& data : dataset) {
+                            layers[l_c].emplace_back(data);
+                        }
+                    }
+                    enter_node_level = l_new_node;
+                }
+            }
+        }
+
         void build(const Dataset<>& dataset_) {
             dataset = dataset_;
             vector_dim = dataset_[0].x.size();
             total_vectors = dataset_.size();
             
-            // Allocate and copy all vectors to GPU at once
+            // Allocate and copy all vectors to GPU
             size_t total_size = total_vectors * vector_dim * sizeof(float);
             CUDA_CHECK(cudaMalloc(&d_all_vectors, total_size));
             
-            // Create contiguous array of vectors
             vector<float> all_vectors;
             all_vectors.reserve(total_vectors * vector_dim);
             for(const auto& data : dataset_) {
                 all_vectors.insert(all_vectors.end(), data.x.begin(), data.x.end());
             }
             
-            // Copy to GPU
             CUDA_CHECK(cudaMemcpy(d_all_vectors, all_vectors.data(), 
                                  total_size, cudaMemcpyHostToDevice));
-
-            // Build the index structure
+            
+            // Process in batches
+            const int BATCH_SIZE = 128;
+            vector<Data<>> batch;
+            batch.reserve(BATCH_SIZE);
+            
             for (const auto& data : dataset) {
-                insert(data);
+                batch.push_back(data);
+                if (batch.size() >= BATCH_SIZE) {
+                    batch_insert(batch);
+                    batch.clear();
+                }
+            }
+            
+            if (!batch.empty()) {
+                batch_insert(batch);
             }
             
             cout << "Index construction completed." << endl;
