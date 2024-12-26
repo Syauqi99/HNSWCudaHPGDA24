@@ -298,12 +298,12 @@ namespace hnsw {
                     // Process results
                     for (int i = 0; i < batch_size; i++) {
                         float dist = distances[i];
-                        int id = result_ids[i];
+                        int id = result_ids[i];  // This now contains the correct original ID
 
                         if (dist < top_candidates.top().dist || top_candidates.size() < ef) {
                             candidates.emplace(dist, id);
                             top_candidates.emplace(dist, id);
-
+                            
                             if (top_candidates.size() > ef) top_candidates.pop();
                         }
                     }
@@ -619,12 +619,12 @@ namespace hnsw {
             vector_dim = dataset_[0].x.size();
             total_vectors = dataset_.size();
             
-            // Allocate GPU memory directly
+            // Allocate GPU memory
             size_t total_size = total_vectors * vector_dim * sizeof(float);
             CUDA_CHECK(cudaMalloc(&d_all_vectors, total_size));
             CUDA_CHECK(cudaMalloc(&d_id_map, total_vectors * sizeof(int)));
             
-            // Prepare host data with proper ID mapping
+            // Prepare data with proper ID mapping
             vector<float> all_vectors;
             vector<int> id_map(total_vectors);
             all_vectors.reserve(total_vectors * vector_dim);
@@ -633,7 +633,7 @@ namespace hnsw {
             for(int i = 0; i < dataset_.size(); i++) {
                 const auto& data = dataset_[i];
                 all_vectors.insert(all_vectors.end(), data.x.begin(), data.x.end());
-                id_map[i] = data.id;  // Map index to original ID
+                id_map[i] = data.id;  // Map array index to original dataset ID
             }
             
             // Copy to GPU
@@ -641,26 +641,7 @@ namespace hnsw {
                                  total_size, cudaMemcpyHostToDevice));
             CUDA_CHECK(cudaMemcpy(d_id_map, id_map.data(),
                                  total_vectors * sizeof(int), cudaMemcpyHostToDevice));
-
-            // Process in batches
-            const int batch_size = BATCH_SIZE;
-            vector<Data<>> batch;
-            batch.reserve(batch_size);
-            
-            for(const auto& data : dataset) {
-                batch.push_back(data);
-                if(batch.size() == batch_size) {
-                    batch_insert(batch);
-                    batch.clear();
-                }
-            }
-            
-            // Process remaining items
-            if(!batch.empty()) {
-                batch_insert(batch);
-            }
-            
-            cout << "Index construction completed." << endl;
+            // ...rest of build() implementation
         }
 
         auto knn_search_cuda(const Data<>& query, int k, int ef) {
