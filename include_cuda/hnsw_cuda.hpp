@@ -175,10 +175,12 @@ namespace hnsw {
                 calc_dist(euclidean_distance<float>),
                 engine(42), unif_dist(0.0, 1.0) {
             // Initialize CUDA stream
-            cudaStreamCreate(&stream);
+            CUDA_CHECK(cudaStreamCreate(&stream));
 
             // Initialize persistent GPU memory
             buffer_size = BATCH_SIZE * MAX_DIM;
+            
+            // Only allocate d_query_buffer once
             CUDA_CHECK(cudaMalloc(&d_query_buffer, MAX_DIM * sizeof(float)));
             CUDA_CHECK(cudaMalloc(&d_distances_buffer, BATCH_SIZE * sizeof(float)));
 
@@ -186,10 +188,7 @@ namespace hnsw {
             CUDA_CHECK(cudaMallocHost(&h_query_buffer, MAX_DIM * sizeof(float)));
             CUDA_CHECK(cudaMallocHost(&h_distances_buffer, BATCH_SIZE * sizeof(float)));
             
-            // Allocate device memory with pitch for alignment
-            size_t pitch;
-            CUDA_CHECK(cudaMallocPitch(&d_query_buffer, &pitch, 
-                                      MAX_DIM * sizeof(float), 1));
+            // Remove second allocation of d_query_buffer with cudaMallocPitch
         }
 
         ~HNSWCuda() {
@@ -251,61 +250,70 @@ namespace hnsw {
                 }
 
                 if (batch_size > 0) {
-                    // Allocate device memory for batch
-                    int* d_batch_indices;
-                    float* d_batch_distances;
-                    int* d_result_ids;
+                    // Allocate device memory for batch with error checking
+                    int* d_batch_indices = nullptr;
+                    float* d_batch_distances = nullptr;
+                    int* d_result_ids = nullptr;
                     
                     CUDA_CHECK(cudaMalloc(&d_batch_indices, batch_size * sizeof(int)));
                     CUDA_CHECK(cudaMalloc(&d_batch_distances, batch_size * sizeof(float)));
                     CUDA_CHECK(cudaMalloc(&d_result_ids, batch_size * sizeof(int)));
 
-                    // Copy batch indices to device
-                    CUDA_CHECK(cudaMemcpyAsync(d_batch_indices, batch_indices.data(),
-                                             batch_size * sizeof(int),
-                                             cudaMemcpyHostToDevice, stream));
+                    try {
+                        // Copy batch indices to device
+                        CUDA_CHECK(cudaMemcpyAsync(d_batch_indices, batch_indices.data(),
+                                                 batch_size * sizeof(int),
+                                                 cudaMemcpyHostToDevice, stream));
 
-                    // Launch kernel
-                    int blockSize = 256;
-                    int numBlocks = (batch_size + blockSize - 1) / blockSize;
-                    
-                    calculateDistances<<<numBlocks, blockSize, 0, stream>>>(
-                        d_query_buffer,
-                        d_all_vectors,
-                        d_batch_indices,
-                        d_batch_distances,
-                        d_result_ids,
-                        d_id_map,  // Use renamed direct pointer
-                        vector_dim,
-                        batch_size
-                    );
+                        // Launch kernel
+                        int blockSize = 256;
+                        int numBlocks = (batch_size + blockSize - 1) / blockSize;
+                        
+                        calculateDistances<<<numBlocks, blockSize, 0, stream>>>(
+                            d_query_buffer,
+                            d_all_vectors,
+                            d_batch_indices,
+                            d_batch_distances,
+                            d_result_ids,
+                            d_id_map,
+                            vector_dim,
+                            batch_size
+                        );
 
-                    // Allocate host memory for results
-                    vector<float> distances(batch_size);
-                    vector<int> result_ids(batch_size);
+                        // Allocate host memory for results
+                        vector<float> distances(batch_size);
+                        vector<int> result_ids(batch_size);
 
-                    // Copy results back
-                    CUDA_CHECK(cudaMemcpyAsync(distances.data(), d_batch_distances,
-                                             batch_size * sizeof(float),
-                                             cudaMemcpyDeviceToHost, stream));
-                    CUDA_CHECK(cudaMemcpyAsync(result_ids.data(), d_result_ids,
-                                             batch_size * sizeof(int),
-                                             cudaMemcpyDeviceToHost, stream));
+                        // Copy results back
+                        CUDA_CHECK(cudaMemcpyAsync(distances.data(), d_batch_distances,
+                                                 batch_size * sizeof(float),
+                                                 cudaMemcpyDeviceToHost, stream));
+                        CUDA_CHECK(cudaMemcpyAsync(result_ids.data(), d_result_ids,
+                                                 batch_size * sizeof(int),
+                                                 cudaMemcpyDeviceToHost, stream));
 
-                    // Synchronize to ensure we have the results
-                    CUDA_CHECK(cudaStreamSynchronize(stream));
+                        // Ensure operations are complete
+                        CUDA_CHECK(cudaStreamSynchronize(stream));
 
-                    // Process results
-                    for (int i = 0; i < batch_size; i++) {
-                        float dist = distances[i];
-                        int id = result_ids[i];  // This now contains the correct original ID
+                        // Process results
+                        for (int i = 0; i < batch_size; i++) {
+                            float dist = distances[i];
+                            int id = result_ids[i];
 
-                        if (dist < top_candidates.top().dist || top_candidates.size() < ef) {
-                            candidates.emplace(dist, id);
-                            top_candidates.emplace(dist, id);
-                            
-                            if (top_candidates.size() > ef) top_candidates.pop();
+                            if (dist < top_candidates.top().dist || top_candidates.size() < ef) {
+                                candidates.emplace(dist, id);
+                                top_candidates.emplace(dist, id);
+                                
+                                if (top_candidates.size() > ef) top_candidates.pop();
+                            }
                         }
+                    }
+                    catch (...) {
+                        // Cleanup on error
+                        if (d_batch_indices) cudaFree(d_batch_indices);
+                        if (d_batch_distances) cudaFree(d_batch_distances);
+                        if (d_result_ids) cudaFree(d_result_ids);
+                        throw;
                     }
 
                     // Clean up
