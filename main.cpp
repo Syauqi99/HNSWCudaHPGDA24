@@ -74,7 +74,7 @@ int main(int argc, char* argv[]) {
     cout << "time for " << repetitions * n_query << " queries: " << total_queries / 1000 << " [ms]" << endl;
 
     const string save_name = "k" + to_string(k) + "-m" + to_string(m) + "-ef" + to_string(ef) +
-                             "-n" + to_string(n) + "-nq" + to_string(n_query) + "-rep" + to_string(repetitions) + "-cpu.csv";
+                             "-n" + to_string(n) + "-nq" + to_string(n_query) + "-rep" + to_string(repetitions) + ".csv";
     const string result_base_dir = base_dir + "results/";
     const string log_path = result_base_dir + "log_cpu-" + save_name;
     const string result_path = result_base_dir + "result_cpu-" + save_name;
