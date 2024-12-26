@@ -8,17 +8,6 @@
 #include <cstdio>  // For fprintf
 #include <cstdlib> // For exit
 #include <iostream>
-#include <vector>
-#include <string>
-#include <map>
-#include <queue>
-#include <algorithm>
-#include <fstream>
-#include <type_traits>
-#include <memory>
-#include <future>
-
-#define MAX_DIM 128  // Adjust based on your maximum dimension
 
 #define CUDA_CHECK(call) do { \
     cudaError_t err = call; \
@@ -41,13 +30,17 @@ namespace hnsw {
         int num_neighbors;
     };
 
+    struct GpuData {
+        float* vectors;  // Contiguous array of vectors
+        int dimensions;
+        int num_vectors;
+    };
+
     __global__ void calculateDistances(
         const float* query,
         const float* all_vectors,
         const int* indices,
         float* distances,
-        int* result_ids,  // Add result IDs array
-        const int* id_map,  // Add id_map parameter
         int dim,
         int num_neighbors
     ) {
@@ -57,6 +50,7 @@ namespace hnsw {
         int vector_idx = indices[idx];
         float distance = 0.0f;
         
+        // Access vectors using correct stride
         const float* vector = all_vectors + (vector_idx * dim);
         for (int i = 0; i < dim; i++) {
             float diff = vector[i] - query[i];
@@ -64,7 +58,6 @@ namespace hnsw {
         }
         
         distances[idx] = sqrtf(distance);
-        result_ids[idx] = id_map[vector_idx];  // Use id_map to get original ID
     }
 
     __global__ void printVectors(const float* vectors, const int* neighbor_indices, int dim, int num_neighbors) {
@@ -137,13 +130,14 @@ namespace hnsw {
         int enter_node_level;
         vector<Layer> layers;
         map<int, vector<int>> layer_map;
-        Dataset<> dataset;  // Already defaulted to float in Dataset definition
+        Dataset<> dataset;
         DistanceFunction<> calc_dist;
 
         mt19937 engine;
         uniform_real_distribution<double> unif_dist;
 
         // Add GPU memory management
+        GpuData d_dataset;  // Device dataset
         vector<GpuNode> d_nodes;  // Device nodes
         
         // Add CUDA stream for async operations
@@ -155,16 +149,12 @@ namespace hnsw {
         float* d_distances_buffer;
         size_t buffer_size;
         const int BATCH_SIZE = 1024;  // Move BATCH_SIZE as class member
+        #define MAX_DIM 128  // Adjust based on your maximum dimension
 
         // Add new member for storing all vectors
         float* d_all_vectors;
-        int* d_id_map;  // Rename from d_dataset.id_map for clarity
         int vector_dim;
         int total_vectors;
-
-        // Add pinned memory buffers
-        float* h_query_buffer;
-        float* h_distances_buffer;
 
         HNSWCuda(int m, int ef_construction = 64, bool extend_candidates = false, bool keep_pruned_connections = true) :
                 m(m), m_max_0(m * 2), m_l(1 / log(1.0 * m)),
@@ -175,33 +165,20 @@ namespace hnsw {
                 calc_dist(euclidean_distance<float>),
                 engine(42), unif_dist(0.0, 1.0) {
             // Initialize CUDA stream
-            CUDA_CHECK(cudaStreamCreate(&stream));
+            cudaStreamCreate(&stream);
 
             // Initialize persistent GPU memory
             buffer_size = BATCH_SIZE * MAX_DIM;
-            
-            // Only allocate d_query_buffer once
             CUDA_CHECK(cudaMalloc(&d_query_buffer, MAX_DIM * sizeof(float)));
             CUDA_CHECK(cudaMalloc(&d_distances_buffer, BATCH_SIZE * sizeof(float)));
-
-            // Use pinned memory for better async performance
-            CUDA_CHECK(cudaMallocHost(&h_query_buffer, MAX_DIM * sizeof(float)));
-            CUDA_CHECK(cudaMallocHost(&h_distances_buffer, BATCH_SIZE * sizeof(float)));
-            
-            // Remove second allocation of d_query_buffer with cudaMallocPitch
         }
 
         ~HNSWCuda() {
             if (d_all_vectors) {
                 CUDA_CHECK(cudaFree(d_all_vectors));
             }
-            if (d_id_map) {
-                CUDA_CHECK(cudaFree(d_id_map));
-            }
             CUDA_CHECK(cudaFree(d_query_buffer));
             CUDA_CHECK(cudaFree(d_distances_buffer));
-            CUDA_CHECK(cudaFreeHost(h_query_buffer));
-            CUDA_CHECK(cudaFreeHost(h_distances_buffer));
             cudaStreamDestroy(stream);
         }
 
@@ -219,22 +196,22 @@ namespace hnsw {
             priority_queue<Neighbor, vector<Neighbor>, CompGreater> candidates;
             priority_queue<Neighbor, vector<Neighbor>, CompLess> top_candidates;
 
-            // Initial distance calculation for start node
-            const auto& start_node = layers[l_c][start_node_id];
-            const auto dist_from_en = calc_dist(query, start_node.data);
-            candidates.emplace(dist_from_en, start_node_id);
-            top_candidates.emplace(dist_from_en, start_node_id);
-
-            // Copy query to device
+            // Copy query once
             CUDA_CHECK(cudaMemcpyAsync(d_query_buffer, query.x.data(), 
                                       query.x.size() * sizeof(float), 
                                       cudaMemcpyHostToDevice, stream));
 
+            const auto& start_node = layers[l_c][start_node_id];
+            const auto dist_from_en = calc_dist(query, start_node.data);
+
+            candidates.emplace(dist_from_en, start_node_id);
+            top_candidates.emplace(dist_from_en, start_node_id);
+
             while (!candidates.empty()) {
                 vector<int> batch_indices;
-                int batch_size = 0;
                 
-                while (!candidates.empty() && batch_size < BATCH_SIZE) {
+                // Collect batch of indices
+                while (!candidates.empty() && batch_indices.size() < BATCH_SIZE) {
                     const auto nearest = candidates.top();
                     candidates.pop();
 
@@ -244,86 +221,60 @@ namespace hnsw {
                         if (!visited[neighbor.id]) {
                             batch_indices.push_back(neighbor.id);
                             visited[neighbor.id] = true;
-                            batch_size++;
                         }
                     }
                 }
 
-                if (batch_size > 0) {
-                    // Allocate device memory for batch with error checking
-                    int* d_batch_indices = nullptr;
-                    float* d_batch_distances = nullptr;
-                    int* d_result_ids = nullptr;
+                if (!batch_indices.empty()) {
+                    int numNeighbors = batch_indices.size();
                     
-                    CUDA_CHECK(cudaMalloc(&d_batch_indices, batch_size * sizeof(int)));
-                    CUDA_CHECK(cudaMalloc(&d_batch_distances, batch_size * sizeof(float)));
-                    CUDA_CHECK(cudaMalloc(&d_result_ids, batch_size * sizeof(int)));
+                    // Copy indices to GPU
+                    int* d_batch_indices;
+                    CUDA_CHECK(cudaMalloc(&d_batch_indices, numNeighbors * sizeof(int)));
+                    CUDA_CHECK(cudaMemcpy(d_batch_indices, batch_indices.data(),
+                                        numNeighbors * sizeof(int),
+                                        cudaMemcpyHostToDevice));
 
-                    try {
-                        // Copy batch indices to device
-                        CUDA_CHECK(cudaMemcpyAsync(d_batch_indices, batch_indices.data(),
-                                                 batch_size * sizeof(int),
-                                                 cudaMemcpyHostToDevice, stream));
+                    int blockSize = 256;
+                    int numBlocks = (numNeighbors + blockSize - 1) / blockSize;
+                    if (numBlocks == 0) numBlocks = 1;  // Ensure at least one block
 
-                        // Launch kernel
-                        int blockSize = 256;
-                        int numBlocks = (batch_size + blockSize - 1) / blockSize;
-                        
-                        calculateDistances<<<numBlocks, blockSize, 0, stream>>>(
-                            d_query_buffer,
-                            d_all_vectors,
-                            d_batch_indices,
-                            d_batch_distances,
-                            d_result_ids,
-                            d_id_map,
-                            vector_dim,
-                            batch_size
-                        );
+                    // Calculate distances using pre-stored vectors
+                    calculateDistances<<<numBlocks, blockSize, 0, stream>>>(
+                        d_query_buffer,
+                        d_all_vectors,
+                        d_batch_indices,
+                        d_distances_buffer,
+                        vector_dim,
+                        numNeighbors
+                    );
 
-                        // Allocate host memory for results
-                        vector<float> distances(batch_size);
-                        vector<int> result_ids(batch_size);
+                    // Check for kernel launch errors
+                    CUDA_CHECK(cudaGetLastError());
 
-                        // Copy results back
-                        CUDA_CHECK(cudaMemcpyAsync(distances.data(), d_batch_distances,
-                                                 batch_size * sizeof(float),
-                                                 cudaMemcpyDeviceToHost, stream));
-                        CUDA_CHECK(cudaMemcpyAsync(result_ids.data(), d_result_ids,
-                                                 batch_size * sizeof(int),
-                                                 cudaMemcpyDeviceToHost, stream));
+                    vector<float> distances(numNeighbors);
+                    CUDA_CHECK(cudaMemcpyAsync(distances.data(), d_distances_buffer,
+                                             numNeighbors * sizeof(float),
+                                             cudaMemcpyDeviceToHost, stream));
+                    
+                    CUDA_CHECK(cudaStreamSynchronize(stream));
+                    CUDA_CHECK(cudaFree(d_batch_indices));
 
-                        // Ensure operations are complete
-                        CUDA_CHECK(cudaStreamSynchronize(stream));
+                    // Process results
+                    for (size_t i = 0; i < batch_indices.size(); i++) {
+                        float dist = distances[i];
+                        int id = batch_indices[i];
 
-                        // Process results
-                        for (int i = 0; i < batch_size; i++) {
-                            float dist = distances[i];
-                            int id = result_ids[i];
+                        if (dist < top_candidates.top().dist || top_candidates.size() < ef) {
+                            candidates.emplace(dist, id);
+                            top_candidates.emplace(dist, id);
 
-                            if (dist < top_candidates.top().dist || top_candidates.size() < ef) {
-                                candidates.emplace(dist, id);
-                                top_candidates.emplace(dist, id);
-                                
-                                if (top_candidates.size() > ef) top_candidates.pop();
-                            }
+                            if (top_candidates.size() > ef) top_candidates.pop();
                         }
                     }
-                    catch (...) {
-                        // Cleanup on error
-                        if (d_batch_indices) cudaFree(d_batch_indices);
-                        if (d_batch_distances) cudaFree(d_batch_distances);
-                        if (d_result_ids) cudaFree(d_result_ids);
-                        throw;
-                    }
-
-                    // Clean up
-                    CUDA_CHECK(cudaFree(d_batch_indices));
-                    CUDA_CHECK(cudaFree(d_batch_distances));
-                    CUDA_CHECK(cudaFree(d_result_ids));
                 }
             }
 
-            // Fill result vector
             while (!top_candidates.empty()) {
                 result.result.emplace_back(top_candidates.top());
                 top_candidates.pop();
@@ -522,134 +473,32 @@ namespace hnsw {
             }
         }
 
-        void batch_insert(const vector<Data<>>& batch_data) {
-            const int batch_size = batch_data.size();
-            
-            // Pre-calculate levels for all nodes in batch
-            vector<int> new_levels(batch_size);
-            vector<int> batch_ids(batch_size);
-            
-            for(int i = 0; i < batch_size; i++) {
-                new_levels[i] = get_new_node_level();
-                batch_ids[i] = batch_data[i].id;
-                
-                // Register IDs in layer map
-                for(int l_c = new_levels[i]; l_c >= 0; --l_c) {
-                    layer_map[l_c].emplace_back(batch_data[i].id);
-                }
-            }
-
-            // Pre-allocate pinned memory for batch
-            float* h_batch_vectors;
-            int* h_batch_ids;
-            CUDA_CHECK(cudaMallocHost(&h_batch_vectors, 
-                                     batch_size * vector_dim * sizeof(float)));
-            CUDA_CHECK(cudaMallocHost(&h_batch_ids, 
-                                     batch_size * sizeof(int)));
-            
-            // Copy batch data to pinned memory
-            for(int i = 0; i < batch_size; i++) {
-                memcpy(h_batch_vectors + i * vector_dim,
-                       batch_data[i].x.data(),
-                       vector_dim * sizeof(float));
-                h_batch_ids[i] = batch_data[i].id;
-            }
-
-            // Process each level, starting from top
-            int max_level = *max_element(new_levels.begin(), new_levels.end());
-            
-            vector<int> start_nodes(batch_size, enter_node_id);
-            
-            // Navigate down through layers
-            for(int l_c = enter_node_level; l_c >= 0; --l_c) {
-                vector<future<void>> futures;
-                
-                // Process each vector in batch that needs to be in this layer
-                for(int i = 0; i < batch_size; i++) {
-                    if(l_c <= new_levels[i]) {
-                        // Find neighbors using GPU search
-                        auto neighbors = search_layer_cuda(batch_data[i], start_nodes[i], 
-                                                        ef_construction, l_c).result;
-                        
-                        if(neighbors.size() > m) {
-                            neighbors = select_neighbors_heuristic(batch_data[i], neighbors, m, l_c);
-                        }
-                        
-                        auto& layer = layers[l_c];
-                        
-                        // Update connections
-                        for(const auto& neighbor : neighbors) {
-                            if(neighbor.id == batch_data[i].id) continue;
-                            
-                            auto& neighbor_node = layer[neighbor.id];
-                            layer[batch_data[i].id].neighbors.emplace_back(neighbor);
-                            neighbor_node.neighbors.emplace_back(neighbor.dist, batch_data[i].id);
-                            
-                            const auto m_max = l_c ? m : m_max_0;
-                            if(neighbor_node.neighbors.size() > m_max) {
-                                neighbor_node.neighbors = select_neighbors_heuristic(
-                                    neighbor_node.data, 
-                                    neighbor_node.neighbors, 
-                                    m_max, 
-                                    l_c
-                                );
-                            }
-                        }
-                        
-                        if(l_c > 0) {
-                            start_nodes[i] = neighbors[0].id;
-                        }
-                    }
-                }
-            }
-            
-            // Update enter point if needed
-            for(int i = 0; i < batch_size; i++) {
-                if(layers.empty() || new_levels[i] > enter_node_level) {
-                    enter_node_id = batch_data[i].id;
-                    enter_node_level = new_levels[i];
-                    
-                    layers.resize(new_levels[i] + 1);
-                    for(int l_c = enter_node_level; l_c <= new_levels[i]; ++l_c) {
-                        for(const auto& data : dataset) {
-                            layers[l_c].emplace_back(data);
-                        }
-                    }
-                }
-            }
-
-            CUDA_CHECK(cudaFreeHost(h_batch_vectors));
-            CUDA_CHECK(cudaFreeHost(h_batch_ids));
-        }
-
         void build(const Dataset<>& dataset_) {
             dataset = dataset_;
             vector_dim = dataset_[0].x.size();
             total_vectors = dataset_.size();
             
-            // Allocate GPU memory
+            // Allocate and copy all vectors to GPU at once
             size_t total_size = total_vectors * vector_dim * sizeof(float);
             CUDA_CHECK(cudaMalloc(&d_all_vectors, total_size));
-            CUDA_CHECK(cudaMalloc(&d_id_map, total_vectors * sizeof(int)));
             
-            // Prepare data with proper ID mapping
+            // Create contiguous array of vectors
             vector<float> all_vectors;
-            vector<int> id_map(total_vectors);
             all_vectors.reserve(total_vectors * vector_dim);
-            
-            // Store vectors and create ID mapping
-            for(int i = 0; i < dataset_.size(); i++) {
-                const auto& data = dataset_[i];
+            for(const auto& data : dataset_) {
                 all_vectors.insert(all_vectors.end(), data.x.begin(), data.x.end());
-                id_map[i] = data.id;  // Map array index to original dataset ID
             }
             
             // Copy to GPU
             CUDA_CHECK(cudaMemcpy(d_all_vectors, all_vectors.data(), 
                                  total_size, cudaMemcpyHostToDevice));
-            CUDA_CHECK(cudaMemcpy(d_id_map, id_map.data(),
-                                 total_vectors * sizeof(int), cudaMemcpyHostToDevice));
-            // ...rest of build() implementation
+
+            // Build the index structure
+            for (const auto& data : dataset) {
+                insert(data);
+            }
+            
+            cout << "Index construction completed." << endl;
         }
 
         auto knn_search_cuda(const Data<>& query, int k, int ef) {
@@ -680,55 +529,6 @@ namespace hnsw {
             }
 
             return result;
-        }
-
-    private:
-        void process_neighbors(const Data<>& data, Neighbors& neighbors, int l_c, int& start_node) {
-            if(neighbors.size() > m) {
-                neighbors = select_neighbors_heuristic(data, neighbors, m, l_c);
-            }
-            
-            auto& layer = layers[l_c];
-            
-            // Update connections
-            for(const auto& neighbor : neighbors) {
-                if(neighbor.id == data.id) continue;
-                
-                auto& neighbor_node = layer[neighbor.id];
-                layer[data.id].neighbors.emplace_back(neighbor);
-                neighbor_node.neighbors.emplace_back(neighbor.dist, data.id);
-                
-                const auto m_max = l_c ? m : m_max_0;
-                if(neighbor_node.neighbors.size() > m_max) {
-                    neighbor_node.neighbors = select_neighbors_heuristic(
-                        neighbor_node.data, 
-                        neighbor_node.neighbors, 
-                        m_max, 
-                        l_c
-                    );
-                }
-            }
-            
-            if(l_c > 0) {
-                start_node = neighbors[0].id;
-            }
-        }
-
-        void update_enter_points(const std::vector<Data<>>& batch_data, 
-                               const std::vector<int>& new_levels) {
-            for(size_t i = 0; i < batch_data.size(); i++) {
-                if(layers.empty() || new_levels[i] > enter_node_level) {
-                    enter_node_id = batch_data[i].id;
-                    enter_node_level = new_levels[i];
-                    
-                    layers.resize(new_levels[i] + 1);
-                    for(int l_c = enter_node_level; l_c <= new_levels[i]; ++l_c) {
-                        for(const auto& data : dataset) {
-                            layers[l_c].emplace_back(data);
-                        }
-                    }
-                }
-            }
         }
     };
 }
