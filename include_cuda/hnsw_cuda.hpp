@@ -54,6 +54,7 @@ namespace hnsw {
         const float* all_vectors,
         const int* indices,
         float* distances,
+        int* result_ids,  // Add result IDs array
         int dim,
         int num_neighbors
     ) {
@@ -63,7 +64,6 @@ namespace hnsw {
         int vector_idx = indices[idx];
         float distance = 0.0f;
         
-        // Access vectors using correct stride
         const float* vector = all_vectors + (vector_idx * dim);
         for (int i = 0; i < dim; i++) {
             float diff = vector[i] - query[i];
@@ -71,6 +71,7 @@ namespace hnsw {
         }
         
         distances[idx] = sqrtf(distance);
+        result_ids[idx] = vector_idx;  // Store the ID
     }
 
     __global__ void printVectors(const float* vectors, const int* neighbor_indices, int dim, int num_neighbors) {
@@ -217,22 +218,6 @@ namespace hnsw {
         }
 
         auto search_layer_cuda(const Data<>& query, int start_node_id, int ef, int l_c) {
-            cudaEvent_t start, stop;
-            CUDA_CHECK(cudaEventCreate(&start));
-            CUDA_CHECK(cudaEventCreate(&stop));
-            
-            // Use pinned memory for transfers
-            CUDA_CHECK(cudaMemcpyAsync(h_query_buffer, query.x.data(),
-                                      query.x.size() * sizeof(float),
-                                      cudaMemcpyHostToHost, stream));
-            CUDA_CHECK(cudaMemcpy2DAsync(d_query_buffer, d_dataset.pitch,
-                                        h_query_buffer, query.x.size() * sizeof(float),
-                                        query.x.size() * sizeof(float), 1,
-                                        cudaMemcpyHostToDevice, stream));
-            
-            // Record event after memory transfer
-            CUDA_CHECK(cudaEventRecord(start, stream));
-
             auto result = SearchResult();
             vector<bool> visited(dataset.size(), false);
             visited[start_node_id] = true;
@@ -240,22 +225,22 @@ namespace hnsw {
             priority_queue<Neighbor, vector<Neighbor>, CompGreater> candidates;
             priority_queue<Neighbor, vector<Neighbor>, CompLess> top_candidates;
 
-            // Copy query once
+            // Initial distance calculation for start node
+            const auto& start_node = layers[l_c][start_node_id];
+            const auto dist_from_en = calc_dist(query, start_node.data);
+            candidates.emplace(dist_from_en, start_node_id);
+            top_candidates.emplace(dist_from_en, start_node_id);
+
+            // Copy query to device
             CUDA_CHECK(cudaMemcpyAsync(d_query_buffer, query.x.data(), 
                                       query.x.size() * sizeof(float), 
                                       cudaMemcpyHostToDevice, stream));
 
-            const auto& start_node = layers[l_c][start_node_id];
-            const auto dist_from_en = calc_dist(query, start_node.data);
-
-            candidates.emplace(dist_from_en, start_node_id);
-            top_candidates.emplace(dist_from_en, start_node_id);
-
             while (!candidates.empty()) {
                 vector<int> batch_indices;
+                int batch_size = 0;
                 
-                // Collect batch of indices
-                while (!candidates.empty() && batch_indices.size() < BATCH_SIZE) {
+                while (!candidates.empty() && batch_size < BATCH_SIZE) {
                     const auto nearest = candidates.top();
                     candidates.pop();
 
@@ -265,49 +250,59 @@ namespace hnsw {
                         if (!visited[neighbor.id]) {
                             batch_indices.push_back(neighbor.id);
                             visited[neighbor.id] = true;
+                            batch_size++;
                         }
                     }
                 }
 
-                if (!batch_indices.empty()) {
-                    int numNeighbors = batch_indices.size();
-                    
-                    // Copy indices to GPU
+                if (batch_size > 0) {
+                    // Allocate device memory for batch
                     int* d_batch_indices;
-                    CUDA_CHECK(cudaMalloc(&d_batch_indices, numNeighbors * sizeof(int)));
-                    CUDA_CHECK(cudaMemcpy(d_batch_indices, batch_indices.data(),
-                                        numNeighbors * sizeof(int),
-                                        cudaMemcpyHostToDevice));
+                    float* d_batch_distances;
+                    int* d_result_ids;
+                    
+                    CUDA_CHECK(cudaMalloc(&d_batch_indices, batch_size * sizeof(int)));
+                    CUDA_CHECK(cudaMalloc(&d_batch_distances, batch_size * sizeof(float)));
+                    CUDA_CHECK(cudaMalloc(&d_result_ids, batch_size * sizeof(int)));
 
+                    // Copy batch indices to device
+                    CUDA_CHECK(cudaMemcpyAsync(d_batch_indices, batch_indices.data(),
+                                             batch_size * sizeof(int),
+                                             cudaMemcpyHostToDevice, stream));
+
+                    // Launch kernel
                     int blockSize = 256;
-                    int numBlocks = (numNeighbors + blockSize - 1) / blockSize;
-                    if (numBlocks == 0) numBlocks = 1;  // Ensure at least one block
-
-                    // Calculate distances using pre-stored vectors
+                    int numBlocks = (batch_size + blockSize - 1) / blockSize;
+                    
                     calculateDistances<<<numBlocks, blockSize, 0, stream>>>(
                         d_query_buffer,
                         d_all_vectors,
                         d_batch_indices,
-                        d_distances_buffer,
+                        d_batch_distances,
+                        d_result_ids,
                         vector_dim,
-                        numNeighbors
+                        batch_size
                     );
 
-                    // Check for kernel launch errors
-                    CUDA_CHECK(cudaGetLastError());
+                    // Allocate host memory for results
+                    vector<float> distances(batch_size);
+                    vector<int> result_ids(batch_size);
 
-                    vector<float> distances(numNeighbors);
-                    CUDA_CHECK(cudaMemcpyAsync(distances.data(), d_distances_buffer,
-                                             numNeighbors * sizeof(float),
+                    // Copy results back
+                    CUDA_CHECK(cudaMemcpyAsync(distances.data(), d_batch_distances,
+                                             batch_size * sizeof(float),
                                              cudaMemcpyDeviceToHost, stream));
-                    
+                    CUDA_CHECK(cudaMemcpyAsync(result_ids.data(), d_result_ids,
+                                             batch_size * sizeof(int),
+                                             cudaMemcpyDeviceToHost, stream));
+
+                    // Synchronize to ensure we have the results
                     CUDA_CHECK(cudaStreamSynchronize(stream));
-                    CUDA_CHECK(cudaFree(d_batch_indices));
 
                     // Process results
-                    for (size_t i = 0; i < batch_indices.size(); i++) {
+                    for (int i = 0; i < batch_size; i++) {
                         float dist = distances[i];
-                        int id = batch_indices[i];
+                        int id = result_ids[i];
 
                         if (dist < top_candidates.top().dist || top_candidates.size() < ef) {
                             candidates.emplace(dist, id);
@@ -316,23 +311,21 @@ namespace hnsw {
                             if (top_candidates.size() > ef) top_candidates.pop();
                         }
                     }
+
+                    // Clean up
+                    CUDA_CHECK(cudaFree(d_batch_indices));
+                    CUDA_CHECK(cudaFree(d_batch_distances));
+                    CUDA_CHECK(cudaFree(d_result_ids));
                 }
             }
 
+            // Fill result vector
             while (!top_candidates.empty()) {
                 result.result.emplace_back(top_candidates.top());
                 top_candidates.pop();
             }
 
             reverse(result.result.begin(), result.result.end());
-
-            // Ensure all operations complete
-            CUDA_CHECK(cudaEventRecord(stop, stream));
-            CUDA_CHECK(cudaEventSynchronize(stop));
-            
-            CUDA_CHECK(cudaEventDestroy(start));
-            CUDA_CHECK(cudaEventDestroy(stop));
-            
             return result;
         }
 
