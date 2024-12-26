@@ -132,7 +132,6 @@ namespace hnsw {
         }
     };
 
-    template<typename T = float>
     struct HNSWCuda {
         const int m, m_max_0, ef_construction;
         const double m_l;
@@ -142,7 +141,7 @@ namespace hnsw {
         int enter_node_level;
         vector<Layer> layers;
         map<int, vector<int>> layer_map;
-        Dataset<> dataset;
+        Dataset<> dataset;  // Already defaulted to float in Dataset definition
         DistanceFunction<> calc_dist;
 
         mt19937 engine;
@@ -635,7 +634,7 @@ namespace hnsw {
         }
 
     private:
-        void process_neighbors(const Data<T>& data, Neighbors& neighbors, int l_c, int& start_node) {
+        void process_neighbors(const Data<>& data, Neighbors& neighbors, int l_c, int& start_node) {
             if(neighbors.size() > m) {
                 neighbors = select_neighbors_heuristic(data, neighbors, m, l_c);
             }
@@ -666,7 +665,7 @@ namespace hnsw {
             }
         }
 
-        void update_enter_points(const std::vector<Data<T>>& batch_data, 
+        void update_enter_points(const std::vector<Data<>>& batch_data, 
                                const std::vector<int>& new_levels) {
             for(size_t i = 0; i < batch_data.size(); i++) {
                 if(layers.empty() || new_levels[i] > enter_node_level) {
