@@ -8,6 +8,12 @@
 #include <cstdio>  // For fprintf
 #include <cstdlib> // For exit
 #include <iostream>
+#include <vector>
+#include <string>
+#include <map>
+#include <queue>
+#include <algorithm>
+#include <fstream>
 
 #define MAX_DIM 128  // Adjust based on your maximum dimension
 
@@ -474,29 +480,121 @@ namespace hnsw {
             }
         }
 
+        void batch_insert(const vector<Data<>>& batch_data) {
+            const int batch_size = batch_data.size();
+            
+            // Pre-calculate levels for all nodes in batch
+            vector<int> new_levels(batch_size);
+            vector<int> batch_ids(batch_size);
+            
+            for(int i = 0; i < batch_size; i++) {
+                new_levels[i] = get_new_node_level();
+                batch_ids[i] = batch_data[i].id;
+                
+                // Register IDs in layer map
+                for(int l_c = new_levels[i]; l_c >= 0; --l_c) {
+                    layer_map[l_c].emplace_back(batch_data[i].id);
+                }
+            }
+
+            // Process each level, starting from top
+            int max_level = *max_element(new_levels.begin(), new_levels.end());
+            
+            vector<int> start_nodes(batch_size, enter_node_id);
+            
+            // Navigate down through layers
+            for(int l_c = enter_node_level; l_c >= 0; --l_c) {
+                vector<future<void>> futures;
+                
+                // Process each vector in batch that needs to be in this layer
+                for(int i = 0; i < batch_size; i++) {
+                    if(l_c <= new_levels[i]) {
+                        // Find neighbors using GPU search
+                        auto neighbors = search_layer_cuda(batch_data[i], start_nodes[i], 
+                                                        ef_construction, l_c).result;
+                        
+                        if(neighbors.size() > m) {
+                            neighbors = select_neighbors_heuristic(batch_data[i], neighbors, m, l_c);
+                        }
+                        
+                        auto& layer = layers[l_c];
+                        
+                        // Update connections
+                        for(const auto& neighbor : neighbors) {
+                            if(neighbor.id == batch_data[i].id) continue;
+                            
+                            auto& neighbor_node = layer[neighbor.id];
+                            layer[batch_data[i].id].neighbors.emplace_back(neighbor);
+                            neighbor_node.neighbors.emplace_back(neighbor.dist, batch_data[i].id);
+                            
+                            const auto m_max = l_c ? m : m_max_0;
+                            if(neighbor_node.neighbors.size() > m_max) {
+                                neighbor_node.neighbors = select_neighbors_heuristic(
+                                    neighbor_node.data, 
+                                    neighbor_node.neighbors, 
+                                    m_max, 
+                                    l_c
+                                );
+                            }
+                        }
+                        
+                        if(l_c > 0) {
+                            start_nodes[i] = neighbors[0].id;
+                        }
+                    }
+                }
+            }
+            
+            // Update enter point if needed
+            for(int i = 0; i < batch_size; i++) {
+                if(layers.empty() || new_levels[i] > enter_node_level) {
+                    enter_node_id = batch_data[i].id;
+                    enter_node_level = new_levels[i];
+                    
+                    layers.resize(new_levels[i] + 1);
+                    for(int l_c = enter_node_level; l_c <= new_levels[i]; ++l_c) {
+                        for(const auto& data : dataset) {
+                            layers[l_c].emplace_back(data);
+                        }
+                    }
+                }
+            }
+        }
+
         void build(const Dataset<>& dataset_) {
             dataset = dataset_;
             vector_dim = dataset_[0].x.size();
             total_vectors = dataset_.size();
             
-            // Allocate and copy all vectors to GPU at once
+            // Allocate and copy all vectors to GPU
             size_t total_size = total_vectors * vector_dim * sizeof(float);
             CUDA_CHECK(cudaMalloc(&d_all_vectors, total_size));
             
-            // Create contiguous array of vectors
             vector<float> all_vectors;
             all_vectors.reserve(total_vectors * vector_dim);
             for(const auto& data : dataset_) {
                 all_vectors.insert(all_vectors.end(), data.x.begin(), data.x.end());
             }
             
-            // Copy to GPU
             CUDA_CHECK(cudaMemcpy(d_all_vectors, all_vectors.data(), 
                                  total_size, cudaMemcpyHostToDevice));
 
-            // Build the index structure
-            for (const auto& data : dataset) {
-                insert(data);
+            // Process in batches
+            const int batch_size = BATCH_SIZE;
+            vector<Data<>> batch;
+            batch.reserve(batch_size);
+            
+            for(const auto& data : dataset) {
+                batch.push_back(data);
+                if(batch.size() == batch_size) {
+                    batch_insert(batch);
+                    batch.clear();
+                }
+            }
+            
+            // Process remaining items
+            if(!batch.empty()) {
+                batch_insert(batch);
             }
             
             cout << "Index construction completed." << endl;
