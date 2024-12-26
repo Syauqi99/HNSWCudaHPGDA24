@@ -156,6 +156,9 @@ namespace hnsw {
         int vector_dim;
         int total_vectors;
 
+        // Add new member for pinned host memory
+        float* h_pinned_vectors;
+
         HNSWCuda(int m, int ef_construction = 64, bool extend_candidates = false, bool keep_pruned_connections = true) :
                 m(m), m_max_0(m * 2), m_l(1 / log(1.0 * m)),
                 enter_node_id(-1), enter_node_level(-1),
@@ -171,6 +174,9 @@ namespace hnsw {
             buffer_size = BATCH_SIZE * MAX_DIM;
             CUDA_CHECK(cudaMalloc(&d_query_buffer, MAX_DIM * sizeof(float)));
             CUDA_CHECK(cudaMalloc(&d_distances_buffer, BATCH_SIZE * sizeof(float)));
+
+            // Add pinned memory allocation
+            CUDA_CHECK(cudaMallocHost(&h_pinned_vectors, BATCH_SIZE * MAX_DIM * sizeof(float)));
         }
 
         ~HNSWCuda() {
@@ -179,6 +185,9 @@ namespace hnsw {
             }
             CUDA_CHECK(cudaFree(d_query_buffer));
             CUDA_CHECK(cudaFree(d_distances_buffer));
+
+            // Add pinned memory cleanup
+            CUDA_CHECK(cudaFreeHost(h_pinned_vectors));
             cudaStreamDestroy(stream);
         }
 
@@ -553,17 +562,36 @@ namespace hnsw {
             size_t total_size = total_vectors * vector_dim * sizeof(float);
             CUDA_CHECK(cudaMalloc(&d_all_vectors, total_size));
             
+            // Use pinned memory for faster transfers
             vector<float> all_vectors;
             all_vectors.reserve(total_vectors * vector_dim);
-            for(const auto& data : dataset_) {
-                all_vectors.insert(all_vectors.end(), data.x.begin(), data.x.end());
+            
+            // Copy data to pinned memory in batches and transfer asynchronously
+            const int vectors_per_batch = BATCH_SIZE;
+            for (int i = 0; i < total_vectors; i += vectors_per_batch) {
+                int batch_size = min(vectors_per_batch, total_vectors - i);
+                int offset = i * vector_dim;
+                
+                // Copy batch to pinned memory
+                for (int j = 0; j < batch_size; j++) {
+                    const auto& data = dataset_[i + j];
+                    memcpy(h_pinned_vectors + j * vector_dim, 
+                          data.x.data(), 
+                          vector_dim * sizeof(float));
+                }
+                
+                // Async copy to GPU
+                CUDA_CHECK(cudaMemcpyAsync(d_all_vectors + offset,
+                                         h_pinned_vectors,
+                                         batch_size * vector_dim * sizeof(float),
+                                         cudaMemcpyHostToDevice,
+                                         stream));
             }
             
-            CUDA_CHECK(cudaMemcpy(d_all_vectors, all_vectors.data(), 
-                                 total_size, cudaMemcpyHostToDevice));
+            // Ensure all transfers are complete
+            CUDA_CHECK(cudaStreamSynchronize(stream));
             
-            // Process in batches
-            const int BATCH_SIZE = 128;
+            // Process nodes in batches for insertion
             vector<Data<>> batch;
             batch.reserve(BATCH_SIZE);
             
