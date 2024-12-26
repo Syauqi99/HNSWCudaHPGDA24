@@ -14,6 +14,9 @@
 #include <queue>
 #include <algorithm>
 #include <fstream>
+#include <type_traits>
+#include <memory>
+#include <future>
 
 #define MAX_DIM 128  // Adjust based on your maximum dimension
 
@@ -129,6 +132,7 @@ namespace hnsw {
         }
     };
 
+    template<typename T = float>
     struct HNSWCuda {
         const int m, m_max_0, ef_construction;
         const double m_l;
@@ -628,6 +632,55 @@ namespace hnsw {
             }
 
             return result;
+        }
+
+    private:
+        void process_neighbors(const Data<T>& data, Neighbors& neighbors, int l_c, int& start_node) {
+            if(neighbors.size() > m) {
+                neighbors = select_neighbors_heuristic(data, neighbors, m, l_c);
+            }
+            
+            auto& layer = layers[l_c];
+            
+            // Update connections
+            for(const auto& neighbor : neighbors) {
+                if(neighbor.id == data.id) continue;
+                
+                auto& neighbor_node = layer[neighbor.id];
+                layer[data.id].neighbors.emplace_back(neighbor);
+                neighbor_node.neighbors.emplace_back(neighbor.dist, data.id);
+                
+                const auto m_max = l_c ? m : m_max_0;
+                if(neighbor_node.neighbors.size() > m_max) {
+                    neighbor_node.neighbors = select_neighbors_heuristic(
+                        neighbor_node.data, 
+                        neighbor_node.neighbors, 
+                        m_max, 
+                        l_c
+                    );
+                }
+            }
+            
+            if(l_c > 0) {
+                start_node = neighbors[0].id;
+            }
+        }
+
+        void update_enter_points(const std::vector<Data<T>>& batch_data, 
+                               const std::vector<int>& new_levels) {
+            for(size_t i = 0; i < batch_data.size(); i++) {
+                if(layers.empty() || new_levels[i] > enter_node_level) {
+                    enter_node_id = batch_data[i].id;
+                    enter_node_level = new_levels[i];
+                    
+                    layers.resize(new_levels[i] + 1);
+                    for(int l_c = enter_node_level; l_c <= new_levels[i]; ++l_c) {
+                        for(const auto& data : dataset) {
+                            layers[l_c].emplace_back(data);
+                        }
+                    }
+                }
+            }
         }
     };
 }
