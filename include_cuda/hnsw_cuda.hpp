@@ -42,7 +42,9 @@ namespace hnsw {
     };
 
     struct GpuData {
-        float* vectors;  // Contiguous array of vectors
+        float* vectors;  // [N * dim] contiguous array
+        int* ids;        // [N] parallel array of IDs
+        size_t pitch;    // For proper alignment
         int dimensions;
         int num_vectors;
     };
@@ -166,6 +168,10 @@ namespace hnsw {
         int vector_dim;
         int total_vectors;
 
+        // Add pinned memory buffers
+        float* h_query_buffer;
+        float* h_distances_buffer;
+
         HNSWCuda(int m, int ef_construction = 64, bool extend_candidates = false, bool keep_pruned_connections = true) :
                 m(m), m_max_0(m * 2), m_l(1 / log(1.0 * m)),
                 enter_node_id(-1), enter_node_level(-1),
@@ -181,6 +187,16 @@ namespace hnsw {
             buffer_size = BATCH_SIZE * MAX_DIM;
             CUDA_CHECK(cudaMalloc(&d_query_buffer, MAX_DIM * sizeof(float)));
             CUDA_CHECK(cudaMalloc(&d_distances_buffer, BATCH_SIZE * sizeof(float)));
+
+            // Use pinned memory for better async performance
+            CUDA_CHECK(cudaMallocHost(&h_query_buffer, MAX_DIM * sizeof(float)));
+            CUDA_CHECK(cudaMallocHost(&h_distances_buffer, BATCH_SIZE * sizeof(float)));
+            
+            // Allocate device memory with pitch for alignment
+            size_t pitch;
+            CUDA_CHECK(cudaMallocPitch(&d_query_buffer, &pitch, 
+                                      MAX_DIM * sizeof(float), 1));
+            d_dataset.pitch = pitch;
         }
 
         ~HNSWCuda() {
@@ -189,6 +205,8 @@ namespace hnsw {
             }
             CUDA_CHECK(cudaFree(d_query_buffer));
             CUDA_CHECK(cudaFree(d_distances_buffer));
+            CUDA_CHECK(cudaFreeHost(h_query_buffer));
+            CUDA_CHECK(cudaFreeHost(h_distances_buffer));
             cudaStreamDestroy(stream);
         }
 
@@ -199,6 +217,22 @@ namespace hnsw {
         }
 
         auto search_layer_cuda(const Data<>& query, int start_node_id, int ef, int l_c) {
+            cudaEvent_t start, stop;
+            CUDA_CHECK(cudaEventCreate(&start));
+            CUDA_CHECK(cudaEventCreate(&stop));
+            
+            // Use pinned memory for transfers
+            CUDA_CHECK(cudaMemcpyAsync(h_query_buffer, query.x.data(),
+                                      query.x.size() * sizeof(float),
+                                      cudaMemcpyHostToHost, stream));
+            CUDA_CHECK(cudaMemcpy2DAsync(d_query_buffer, d_dataset.pitch,
+                                        h_query_buffer, query.x.size() * sizeof(float),
+                                        query.x.size() * sizeof(float), 1,
+                                        cudaMemcpyHostToDevice, stream));
+            
+            // Record event after memory transfer
+            CUDA_CHECK(cudaEventRecord(start, stream));
+
             auto result = SearchResult();
             vector<bool> visited(dataset.size(), false);
             visited[start_node_id] = true;
@@ -291,6 +325,14 @@ namespace hnsw {
             }
 
             reverse(result.result.begin(), result.result.end());
+
+            // Ensure all operations complete
+            CUDA_CHECK(cudaEventRecord(stop, stream));
+            CUDA_CHECK(cudaEventSynchronize(stop));
+            
+            CUDA_CHECK(cudaEventDestroy(start));
+            CUDA_CHECK(cudaEventDestroy(stop));
+            
             return result;
         }
 
@@ -500,6 +542,22 @@ namespace hnsw {
                 }
             }
 
+            // Pre-allocate pinned memory for batch
+            float* h_batch_vectors;
+            int* h_batch_ids;
+            CUDA_CHECK(cudaMallocHost(&h_batch_vectors, 
+                                     batch_size * vector_dim * sizeof(float)));
+            CUDA_CHECK(cudaMallocHost(&h_batch_ids, 
+                                     batch_size * sizeof(int)));
+            
+            // Copy batch data to pinned memory
+            for(int i = 0; i < batch_size; i++) {
+                memcpy(h_batch_vectors + i * vector_dim,
+                       batch_data[i].x.data(),
+                       vector_dim * sizeof(float));
+                h_batch_ids[i] = batch_data[i].id;
+            }
+
             // Process each level, starting from top
             int max_level = *max_element(new_levels.begin(), new_levels.end());
             
@@ -562,6 +620,9 @@ namespace hnsw {
                     }
                 }
             }
+
+            CUDA_CHECK(cudaFreeHost(h_batch_vectors));
+            CUDA_CHECK(cudaFreeHost(h_batch_ids));
         }
 
         void build(const Dataset<>& dataset_) {
