@@ -159,6 +159,14 @@ namespace hnsw {
         // Add new member for pinned host memory
         float* h_pinned_vectors;
 
+        // Modify these constants
+        const int MAX_VECTORS_PER_BATCH = 2048;  // Increased from 1024
+        const int MAX_NEIGHBORS_PER_NODE = 256;  // New constant
+
+        // New members for dynamic buffer management
+        size_t total_buffer_size;
+        size_t vector_buffer_size;
+
         HNSWCuda(int m, int ef_construction = 64, bool extend_candidates = false, bool keep_pruned_connections = true) :
                 m(m), m_max_0(m * 2), m_l(1 / log(1.0 * m)),
                 enter_node_id(-1), enter_node_level(-1),
@@ -170,13 +178,21 @@ namespace hnsw {
             // Initialize CUDA stream
             cudaStreamCreate(&stream);
 
-            // Initialize persistent GPU memory
-            buffer_size = BATCH_SIZE * MAX_DIM;
-            CUDA_CHECK(cudaMalloc(&d_query_buffer, MAX_DIM * sizeof(float)));
-            CUDA_CHECK(cudaMalloc(&d_distances_buffer, BATCH_SIZE * sizeof(float)));
+            // Calculate buffer sizes dynamically
+            vector_buffer_size = MAX_VECTORS_PER_BATCH * MAX_DIM * sizeof(float);
+            total_buffer_size = vector_buffer_size * 2; // Double for safety
 
-            // Add pinned memory allocation
-            CUDA_CHECK(cudaMallocHost(&h_pinned_vectors, BATCH_SIZE * MAX_DIM * sizeof(float)));
+            // Allocate larger buffers
+            CUDA_CHECK(cudaMalloc(&d_query_buffer, MAX_DIM * sizeof(float)));
+            CUDA_CHECK(cudaMalloc(&d_distances_buffer, MAX_VECTORS_PER_BATCH * sizeof(float)));
+            CUDA_CHECK(cudaMallocHost(&h_pinned_vectors, vector_buffer_size));
+
+            // Add error checking
+            cudaError_t err = cudaGetLastError();
+            if (err != cudaSuccess) {
+                std::cerr << "CUDA allocation error: " << cudaGetErrorString(err) << std::endl;
+                throw std::runtime_error("CUDA allocation failed");
+            }
         }
 
         ~HNSWCuda() {
@@ -558,55 +574,58 @@ namespace hnsw {
             vector_dim = dataset_[0].x.size();
             total_vectors = dataset_.size();
             
-            // Allocate and copy all vectors to GPU
-            size_t total_size = total_vectors * vector_dim * sizeof(float);
+            if (vector_dim > MAX_DIM) {
+                throw std::runtime_error("Vector dimension exceeds MAX_DIM");
+            }
+
+            // Allocate GPU memory in chunks
+            size_t total_size = static_cast<size_t>(total_vectors) * vector_dim * sizeof(float);
             CUDA_CHECK(cudaMalloc(&d_all_vectors, total_size));
-            
-            // Use pinned memory for faster transfers
-            vector<float> all_vectors;
-            all_vectors.reserve(total_vectors * vector_dim);
-            
-            // Copy data to pinned memory in batches and transfer asynchronously
-            const int vectors_per_batch = BATCH_SIZE;
-            for (int i = 0; i < total_vectors; i += vectors_per_batch) {
-                int batch_size = min(vectors_per_batch, total_vectors - i);
-                int offset = i * vector_dim;
-                
-                // Copy batch to pinned memory
-                for (int j = 0; j < batch_size; j++) {
-                    const auto& data = dataset_[i + j];
-                    memcpy(h_pinned_vectors + j * vector_dim, 
-                          data.x.data(), 
+
+            // Process in smaller chunks
+            const size_t vectors_per_chunk = MAX_VECTORS_PER_BATCH;
+            const size_t num_chunks = (total_vectors + vectors_per_chunk - 1) / vectors_per_chunk;
+
+            for (size_t chunk = 0; chunk < num_chunks; chunk++) {
+                const size_t start_idx = chunk * vectors_per_chunk;
+                const size_t end_idx = std::min(start_idx + vectors_per_chunk, static_cast<size_t>(total_vectors));
+                const size_t chunk_size = end_idx - start_idx;
+
+                // Copy chunk to pinned memory
+                for (size_t i = 0; i < chunk_size; i++) {
+                    const auto& data = dataset_[start_idx + i];
+                    memcpy(h_pinned_vectors + i * vector_dim,
+                          data.x.data(),
                           vector_dim * sizeof(float));
                 }
-                
+
                 // Async copy to GPU
-                CUDA_CHECK(cudaMemcpyAsync(d_all_vectors + offset,
+                const size_t offset = start_idx * vector_dim * sizeof(float);
+                CUDA_CHECK(cudaMemcpyAsync(d_all_vectors + start_idx * vector_dim,
                                          h_pinned_vectors,
-                                         batch_size * vector_dim * sizeof(float),
+                                         chunk_size * vector_dim * sizeof(float),
                                          cudaMemcpyHostToDevice,
                                          stream));
+                
+                CUDA_CHECK(cudaStreamSynchronize(stream));
             }
-            
-            // Ensure all transfers are complete
-            CUDA_CHECK(cudaStreamSynchronize(stream));
-            
-            // Process nodes in batches for insertion
+
+            // Process insertions in batches
             vector<Data<>> batch;
-            batch.reserve(BATCH_SIZE);
-            
+            batch.reserve(MAX_VECTORS_PER_BATCH);
+
             for (const auto& data : dataset) {
                 batch.push_back(data);
-                if (batch.size() >= BATCH_SIZE) {
+                if (batch.size() >= MAX_VECTORS_PER_BATCH) {
                     batch_insert(batch);
                     batch.clear();
                 }
             }
-            
+
             if (!batch.empty()) {
                 batch_insert(batch);
             }
-            
+
             cout << "Index construction completed." << endl;
         }
 
