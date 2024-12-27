@@ -600,7 +600,6 @@ namespace hnsw {
                 }
 
                 // Async copy to GPU
-                const size_t offset = start_idx * vector_dim * sizeof(float);
                 CUDA_CHECK(cudaMemcpyAsync(d_all_vectors + start_idx * vector_dim,
                                          h_pinned_vectors,
                                          chunk_size * vector_dim * sizeof(float),
