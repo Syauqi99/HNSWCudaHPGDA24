@@ -221,15 +221,10 @@ namespace hnsw {
             priority_queue<Neighbor, vector<Neighbor>, CompGreater> candidates;
             priority_queue<Neighbor, vector<Neighbor>, CompLess> top_candidates;
 
-            // Use pinned memory for the query
-            float* h_pinned_query;
-            CUDA_CHECK(cudaMallocHost(&h_pinned_query, query.x.size() * sizeof(float)));
-            memcpy(h_pinned_query, query.x.data(), query.x.size() * sizeof(float));
-
-            // Copy query once using pinned memory
-            CUDA_CHECK(cudaMemcpyAsync(d_query_buffer, h_pinned_query, 
-                                       query.x.size() * sizeof(float), 
-                                       cudaMemcpyHostToDevice, stream));
+            // Copy query once
+            CUDA_CHECK(cudaMemcpyAsync(d_query_buffer, query.x.data(), 
+                                      query.x.size() * sizeof(float), 
+                                      cudaMemcpyHostToDevice, stream));
 
             const auto& start_node = layers[l_c][start_node_id];
             const auto dist_from_en = calc_dist(query, start_node.data);
@@ -262,8 +257,8 @@ namespace hnsw {
                     int* d_batch_indices;
                     CUDA_CHECK(cudaMalloc(&d_batch_indices, numNeighbors * sizeof(int)));
                     CUDA_CHECK(cudaMemcpy(d_batch_indices, batch_indices.data(),
-                                          numNeighbors * sizeof(int),
-                                          cudaMemcpyHostToDevice));
+                                        numNeighbors * sizeof(int),
+                                        cudaMemcpyHostToDevice));
 
                     int blockSize = 256;
                     int numBlocks = (numNeighbors + blockSize - 1) / blockSize;
@@ -282,20 +277,17 @@ namespace hnsw {
                     // Check for kernel launch errors
                     CUDA_CHECK(cudaGetLastError());
 
-                    // Use pinned memory for distances
-                    float* h_pinned_distances;
-                    CUDA_CHECK(cudaMallocHost(&h_pinned_distances, numNeighbors * sizeof(float)));
-
-                    CUDA_CHECK(cudaMemcpyAsync(h_pinned_distances, d_distances_buffer,
-                                               numNeighbors * sizeof(float),
-                                               cudaMemcpyDeviceToHost, stream));
+                    vector<float> distances(numNeighbors);
+                    CUDA_CHECK(cudaMemcpyAsync(distances.data(), d_distances_buffer,
+                                             numNeighbors * sizeof(float),
+                                             cudaMemcpyDeviceToHost, stream));
                     
                     CUDA_CHECK(cudaStreamSynchronize(stream));
                     CUDA_CHECK(cudaFree(d_batch_indices));
 
                     // Process results
                     for (size_t i = 0; i < batch_indices.size(); i++) {
-                        float dist = h_pinned_distances[i];
+                        float dist = distances[i];
                         int id = batch_indices[i];
 
                         if (dist < top_candidates.top().dist || top_candidates.size() < ef) {
@@ -305,9 +297,6 @@ namespace hnsw {
                             if (top_candidates.size() > ef) top_candidates.pop();
                         }
                     }
-
-                    // Free pinned memory for distances
-                    CUDA_CHECK(cudaFreeHost(h_pinned_distances));
                 }
             }
 
@@ -317,10 +306,6 @@ namespace hnsw {
             }
 
             reverse(result.result.begin(), result.result.end());
-
-            // Free pinned memory for query
-            CUDA_CHECK(cudaFreeHost(h_pinned_query));
-
             return result;
         }
 

@@ -1,4 +1,4 @@
-#include <hnsw_cuda.hpp>
+#include <hnsw_stream.hpp>
 #include <utils_cuda.hpp>
 #include <fstream>
 #include <vector>
@@ -47,7 +47,7 @@ int main(int argc, char* argv[]) {
     const auto ground_truth = load_ivec(ground_truth_path, n_query, k);
 
     const auto start = get_now();
-    auto index = HNSWCuda(m, ef_construction);
+    auto index = HNSWStream(m, ef_construction);
     index.build(dataset);
     const auto end = get_now();
     const auto build_time = get_duration(start, end);
@@ -61,7 +61,7 @@ int main(int argc, char* argv[]) {
             const auto& query = queries[i];
 
             auto q_start = get_now();
-            auto result = index.knn_search_cuda(query, k, ef);
+            auto result = index.search_layer_cuda(query, k, ef, 0);
             auto q_end = get_now();
             total_queries += get_duration(q_start, q_end);
 
@@ -76,10 +76,10 @@ int main(int argc, char* argv[]) {
     const string save_name = "k" + to_string(k) + "-m" + to_string(m) + "-ef" + to_string(ef) +
                              "-n" + to_string(n) + "-nq" + to_string(n_query) + "-rep" + to_string(repetitions) + ".csv";
     const string result_base_dir = base_dir + "results/";
-    const string log_path = result_base_dir + "logcuda-" + save_name;
-    const string result_path = result_base_dir + "resultcuda-" + save_name;
+    const string log_path = result_base_dir + "log_stream-" + save_name;
+    const string result_path = result_base_dir + "result_stream-" + save_name;
     results.save(log_path, result_path);
 
-    const string times_path = result_base_dir + "times_cuda-" + save_name;
+    const string times_path = result_base_dir + "times_stream-" + save_name;
     save_total_query_times(times_path, total_query_times);
 } 
