@@ -224,10 +224,18 @@ namespace hnsw {
             candidates.emplace(dist_from_en, start_node_id);
             top_candidates.emplace(dist_from_en, start_node_id);
 
+            // Create a list of streams
+            const int numStreams = 4;  // Number of streams to use
+            std::vector<cudaStream_t> streams(numStreams);
+            for (int i = 0; i < numStreams; ++i) {
+                CUDA_CHECK(cudaStreamCreate(&streams[i]));
+            }
+
             while (!candidates.empty()) {
                 vector<int> batch_indices;
-                
-                // Collect batch of indices
+                vector<float> batch_vectors;
+
+                // Collect batch of indices and vectors
                 while (!candidates.empty() && batch_indices.size() < BATCH_SIZE) {
                     const auto nearest = candidates.top();
                     candidates.pop();
@@ -238,47 +246,65 @@ namespace hnsw {
                         if (!visited[neighbor.id]) {
                             batch_indices.push_back(neighbor.id);
                             visited[neighbor.id] = true;
+
+                            // Add vector data to batch
+                            const auto& neighbor_data = layers[l_c][neighbor.id].data;
+                            batch_vectors.insert(batch_vectors.end(), neighbor_data.begin(), neighbor_data.end());
                         }
                     }
                 }
 
                 if (!batch_indices.empty()) {
                     int numNeighbors = batch_indices.size();
-                    
-                    // Copy indices to GPU
-                    int* d_batch_indices;
-                    CUDA_CHECK(cudaMalloc(&d_batch_indices, numNeighbors * sizeof(int)));
-                    CUDA_CHECK(cudaMemcpy(d_batch_indices, batch_indices.data(),
-                                          numNeighbors * sizeof(int),
-                                          cudaMemcpyHostToDevice));
+                    int neighborsPerStream = (numNeighbors + numStreams - 1) / numStreams;
 
-                    int blockSize = 256;
-                    int numBlocks = (numNeighbors + blockSize - 1) / blockSize;
-                    if (numBlocks == 0) numBlocks = 1;  // Ensure at least one block
+                    for (int s = 0; s < numStreams; ++s) {
+                        int startIdx = s * neighborsPerStream;
+                        int endIdx = min(startIdx + neighborsPerStream, numNeighbors);
 
-                    // Calculate distances using pre-stored vectors
-                    calculateDistances<<<numBlocks, blockSize, 0, stream>>>(
-                        d_query_buffer,
-                        d_all_vectors,
-                        d_batch_indices,
-                        d_distances_buffer,
-                        vector_dim,
-                        numNeighbors
-                    );
+                        if (startIdx >= endIdx) break;
 
-                    // Check for kernel launch errors
-                    CUDA_CHECK(cudaGetLastError());
+                        // Copy indices and vectors to GPU
+                        int* d_batch_indices;
+                        CUDA_CHECK(cudaMalloc(&d_batch_indices, (endIdx - startIdx) * sizeof(int)));
+                        CUDA_CHECK(cudaMemcpyAsync(d_batch_indices, &batch_indices[startIdx],
+                                                   (endIdx - startIdx) * sizeof(int),
+                                                   cudaMemcpyHostToDevice, streams[s]));
 
-                    // Async copy back of results using pinned memory
-                    CUDA_CHECK(cudaMemcpyAsync(h_pinned_distances, d_distances_buffer,
-                                               numNeighbors * sizeof(float),
-                                               cudaMemcpyDeviceToHost, stream));
-                    
-                    CUDA_CHECK(cudaStreamSynchronize(stream));
-                    CUDA_CHECK(cudaFree(d_batch_indices));
+                        CUDA_CHECK(cudaMemcpyAsync(d_neighbor_buffer, &batch_vectors[startIdx * vector_dim],
+                                                   (endIdx - startIdx) * vector_dim * sizeof(float),
+                                                   cudaMemcpyHostToDevice, streams[s]));
+
+                        int blockSize = 256;
+                        int numBlocks = ((endIdx - startIdx) + blockSize - 1) / blockSize;
+                        if (numBlocks == 0) numBlocks = 1;  // Ensure at least one block
+
+                        // Launch kernel in stream
+                        calculateDistances<<<numBlocks, blockSize, 0, streams[s]>>>(
+                            d_query_buffer,
+                            d_neighbor_buffer,
+                            d_distances_buffer + startIdx,
+                            vector_dim,
+                            endIdx - startIdx
+                        );
+
+                        CUDA_CHECK(cudaGetLastError());
+
+                        CUDA_CHECK(cudaMemcpyAsync(h_pinned_distances + startIdx, d_distances_buffer + startIdx,
+                                                   (endIdx - startIdx) * sizeof(float),
+                                                   cudaMemcpyDeviceToHost, streams[s]));
+
+                        // Free GPU memory for indices
+                        CUDA_CHECK(cudaFree(d_batch_indices));
+                    }
+
+                    // Synchronize all streams
+                    for (int s = 0; s < numStreams; ++s) {
+                        CUDA_CHECK(cudaStreamSynchronize(streams[s]));
+                    }
 
                     // Process results
-                    for (size_t i = 0; i < batch_indices.size(); i++) {
+                    for (int i = 0; i < numNeighbors; i++) {
                         float dist = h_pinned_distances[i];
                         int id = batch_indices[i];
 
@@ -298,6 +324,12 @@ namespace hnsw {
             }
 
             reverse(result.result.begin(), result.result.end());
+
+            // Destroy all streams
+            for (auto& s : streams) {
+                CUDA_CHECK(cudaStreamDestroy(s));
+            }
+
             return result;
         }
 
@@ -494,27 +526,12 @@ namespace hnsw {
             dataset = dataset_;
             vector_dim = dataset_[0].x.size();
             total_vectors = dataset_.size();
-            
-            // Allocate and copy all vectors to GPU at once
-            size_t total_size = total_vectors * vector_dim * sizeof(float);
-            CUDA_CHECK(cudaMalloc(&d_all_vectors, total_size));
-            
-            // Create contiguous array of vectors
-            vector<float> all_vectors;
-            all_vectors.reserve(total_vectors * vector_dim);
-            for(const auto& data : dataset_) {
-                all_vectors.insert(all_vectors.end(), data.x.begin(), data.x.end());
-            }
-            
-            // Copy to GPU
-            CUDA_CHECK(cudaMemcpy(d_all_vectors, all_vectors.data(), 
-                                 total_size, cudaMemcpyHostToDevice));
 
             // Build the index structure
             for (const auto& data : dataset) {
                 insert(data);
             }
-            
+
             cout << "Index construction completed." << endl;
         }
 

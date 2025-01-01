@@ -208,25 +208,32 @@ namespace hnsw {
             priority_queue<Neighbor, vector<Neighbor>, CompGreater> candidates;
             priority_queue<Neighbor, vector<Neighbor>, CompLess> top_candidates;
 
-            // Async copy of query data
+            // Copy query using stream
             CUDA_CHECK(cudaMemcpyAsync(d_query_buffer, query.x.data(), 
-                                    query.x.size() * sizeof(float), 
-                                    cudaMemcpyHostToDevice, stream));
+                                       query.x.size() * sizeof(float), 
+                                       cudaMemcpyHostToDevice, stream));
+
+            // Create a list of streams
+            const int numStreams = 4;  // Number of streams to use
+            std::vector<cudaStream_t> streams(numStreams);
+            for (int i = 0; i < numStreams; ++i) {
+                CUDA_CHECK(cudaStreamCreate(&streams[i]));
+            }
 
             const auto& start_node = layers[l_c][start_node_id];
             const auto dist_from_en = calc_dist(query, start_node.data);
 
             candidates.emplace(dist_from_en, start_node_id);
             top_candidates.emplace(dist_from_en, start_node_id);
-            
+
             // Vectors for batch processing
             vector<int> batch_neighbor_ids;
             vector<float> batch_vectors;
-            
+
             while (!candidates.empty()) {
                 batch_neighbor_ids.clear();
                 batch_vectors.clear();
-                
+
                 // Collect neighbors for batch processing
                 while (!candidates.empty() && batch_neighbor_ids.size() < BATCH_SIZE) {
                     const auto nearest_candidate = candidates.top();
@@ -240,7 +247,7 @@ namespace hnsw {
                         if (!visited[neighbor.id]) {
                             batch_neighbor_ids.push_back(neighbor.id);
                             visited[neighbor.id] = true;
-                            
+
                             // Add vector data to batch
                             const auto& neighbor_data = layers[l_c][neighbor.id].data;
                             batch_vectors.insert(batch_vectors.end(), neighbor_data.begin(), neighbor_data.end());
@@ -248,42 +255,50 @@ namespace hnsw {
                     }
                 }
 
-                // Process batch if not empty
                 if (!batch_neighbor_ids.empty()) {
                     int numNeighbors = batch_neighbor_ids.size();
-                    
-                    // Async copy of neighbor vectors
-                    CUDA_CHECK(cudaMemcpyAsync(d_neighbor_buffer, batch_vectors.data(), 
-                                             batch_vectors.size() * sizeof(float), 
-                                             cudaMemcpyHostToDevice, stream));
+                    int neighborsPerStream = (numNeighbors + numStreams - 1) / numStreams;
 
-                    // Launch kernel
-                    int blockSize = 256;
-                    int numBlocks = (numNeighbors + blockSize - 1) / blockSize;
-                    
-                    // Ensure valid launch configuration
-                    if (numBlocks == 0) numBlocks = 1;
-                    if (blockSize > 1024) blockSize = 1024;
+                    for (int s = 0; s < numStreams; ++s) {
+                        int startIdx = s * neighborsPerStream;
+                        int endIdx = min(startIdx + neighborsPerStream, numNeighbors);
 
-                    // Launch kernel in stream
-                    calculateDistances<<<numBlocks, blockSize, 0, stream>>>(
-                        d_query_buffer,
-                        d_neighbor_buffer,
-                        d_distances_buffer,
-                        query.x.size(),
-                        numNeighbors
-                    );
+                        if (startIdx >= endIdx) break;
 
-                    CUDA_CHECK(cudaGetLastError());
+                        // Copy indices to GPU
+                        int* d_batch_indices;
+                        CUDA_CHECK(cudaMalloc(&d_batch_indices, (endIdx - startIdx) * sizeof(int)));
+                        CUDA_CHECK(cudaMemcpyAsync(d_batch_indices, &batch_neighbor_ids[startIdx],
+                                                   (endIdx - startIdx) * sizeof(int),
+                                                   cudaMemcpyHostToDevice, streams[s]));
 
-                    // Async copy back of results
-                    vector<float> distances(numNeighbors);
-                    CUDA_CHECK(cudaMemcpyAsync(distances.data(), d_distances_buffer, 
-                                             numNeighbors * sizeof(float), 
-                                             cudaMemcpyDeviceToHost, stream));
-                    
-                    // Synchronize stream before using the results
-                    CUDA_CHECK(cudaStreamSynchronize(stream));
+                        int blockSize = 256;
+                        int numBlocks = ((endIdx - startIdx) + blockSize - 1) / blockSize;
+                        if (numBlocks == 0) numBlocks = 1;  // Ensure at least one block
+
+                        // Launch kernel in stream
+                        calculateDistances<<<numBlocks, blockSize, 0, streams[s]>>>(
+                            d_query_buffer,
+                            d_neighbor_buffer,
+                            d_distances_buffer + startIdx,
+                            query.x.size(),
+                            endIdx - startIdx
+                        );
+
+                        CUDA_CHECK(cudaGetLastError());
+
+                        CUDA_CHECK(cudaMemcpyAsync(distances.data() + startIdx, d_distances_buffer + startIdx,
+                                                   (endIdx - startIdx) * sizeof(float),
+                                                   cudaMemcpyDeviceToHost, streams[s]));
+
+                        // Free GPU memory for indices
+                        CUDA_CHECK(cudaFree(d_batch_indices));
+                    }
+
+                    // Synchronize all streams
+                    for (int s = 0; s < numStreams; ++s) {
+                        CUDA_CHECK(cudaStreamSynchronize(streams[s]));
+                    }
 
                     // Update candidates and top_candidates
                     for (size_t i = 0; i < batch_neighbor_ids.size(); i++) {
@@ -306,7 +321,12 @@ namespace hnsw {
             }
 
             reverse(result.result.begin(), result.result.end());
-            
+
+            // Destroy all streams
+            for (auto& s : streams) {
+                CUDA_CHECK(cudaStreamDestroy(s));
+            }
+
             return result;
         }
 
