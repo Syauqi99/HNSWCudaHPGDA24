@@ -244,8 +244,6 @@ namespace hnsw {
                 CUDA_CHECK(cudaStreamCreate(&streams[i]));
             }
 
-            int streamIndex = 0;  // To cycle through streams
-
             while (!candidates.empty()) {
                 vector<int> batch_indices;
                 
