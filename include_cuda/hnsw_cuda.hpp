@@ -325,7 +325,10 @@ namespace hnsw {
                         // Process results from all streams
                         // After all streams have completed, process results
                         for (const auto& results : stream_results) {
-                            for (const auto& [dist, id] : results) {
+                            for (const auto& result : results) {
+                                float dist = result.first;
+                                int id = result.second;
+                                
                                 if (dist < top_candidates.top().dist || top_candidates.size() < ef) {
                                     candidates.emplace(dist, id);
                                     top_candidates.emplace(dist, id);
