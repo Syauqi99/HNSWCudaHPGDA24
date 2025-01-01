@@ -320,6 +320,13 @@ namespace hnsw {
 
                     // Cycle to the next stream
                     streamIndex = (streamIndex + 1) % numStreams;
+
+                    if (streamIndex == (numStreams-1) || batch_indices.empty()) {
+                        // Synchronize all streams at the end
+                        for (auto& s : streams) {
+                            CUDA_CHECK(cudaStreamSynchronize(s));
+                        }
+                    }
                 }
             }
 
