@@ -39,21 +39,19 @@ namespace hnsw {
     };
 
     __global__ void calculateDistances(
-        const float* query,
-        const float* all_vectors,
-        const int* indices,
-        float* distances,
-        int dim,
-        int num_neighbors
+        const float* query,          // query vector
+        const float* vectors,        // batch of vectors to compare against
+        float* distances,           // output distances
+        int dim,                    // dimension of vectors
+        int num_vectors            // number of vectors to compare
     ) {
         int idx = blockIdx.x * blockDim.x + threadIdx.x;
-        if (idx >= num_neighbors) return;
-        
-        int vector_idx = indices[idx];
+        if (idx >= num_vectors) return;
+
         float distance = 0.0f;
+        const float* vector = vectors + (idx * dim);  // Get pointer to current vector
         
-        // Access vectors using correct stride
-        const float* vector = all_vectors + (vector_idx * dim);
+        // Calculate Euclidean distance
         for (int i = 0; i < dim; i++) {
             float diff = vector[i] - query[i];
             distance += diff * diff;
@@ -61,7 +59,7 @@ namespace hnsw {
         
         distances[idx] = sqrtf(distance);
     }
-
+    
     __global__ void printVectors(const float* vectors, const int* neighbor_indices, int dim, int num_neighbors) {
         int idx = blockIdx.x * blockDim.x + threadIdx.x;
         
