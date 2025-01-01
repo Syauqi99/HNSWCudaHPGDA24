@@ -1,5 +1,5 @@
-#ifndef HNSW_HNSW_HPP
-#define HNSW_HNSW_HPP
+#ifndef HNSW_ALLOCATION_HPP
+#define HNSW_ALLOCATION_HPP
 
 #include <queue>
 #include <utils_allocation.hpp>

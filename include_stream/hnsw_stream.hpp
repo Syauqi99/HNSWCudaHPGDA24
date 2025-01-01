@@ -229,6 +229,7 @@ namespace hnsw {
             // Vectors for batch processing
             vector<int> batch_neighbor_ids;
             vector<float> batch_vectors;
+            vector<float> distances(BATCH_SIZE);  // Define the distances vector
 
             while (!candidates.empty()) {
                 batch_neighbor_ids.clear();
@@ -270,6 +271,10 @@ namespace hnsw {
                         CUDA_CHECK(cudaMalloc(&d_batch_indices, (endIdx - startIdx) * sizeof(int)));
                         CUDA_CHECK(cudaMemcpyAsync(d_batch_indices, &batch_neighbor_ids[startIdx],
                                                    (endIdx - startIdx) * sizeof(int),
+                                                   cudaMemcpyHostToDevice, streams[s]));
+
+                        CUDA_CHECK(cudaMemcpyAsync(d_neighbor_buffer, &batch_vectors[startIdx * query.x.size()],
+                                                   (endIdx - startIdx) * query.x.size() * sizeof(float),
                                                    cudaMemcpyHostToDevice, streams[s]));
 
                         int blockSize = 256;
