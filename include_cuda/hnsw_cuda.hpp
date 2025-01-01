@@ -299,20 +299,16 @@ namespace hnsw {
                                                numNeighbors * sizeof(float),
                                                cudaMemcpyDeviceToHost, streams[streamIndex]));
                     
-                    CUDA_CHECK(cudaStreamSynchronize(streams[streamIndex]));
                     CUDA_CHECK(cudaFree(d_batch_indices));
 
-                    // Process results
+                    // Create a vector to store results from each stream
+                    vector<vector<pair<float, int>>> stream_results(numStreams);
+
+                    // Collect distances and ids in a temporary container for each stream
                     for (size_t i = 0; i < batch_indices.size(); i++) {
                         float dist = h_pinned_distances[i];
                         int id = batch_indices[i];
-
-                        if (dist < top_candidates.top().dist || top_candidates.size() < ef) {
-                            candidates.emplace(dist, id);
-                            top_candidates.emplace(dist, id);
-
-                            if (top_candidates.size() > ef) top_candidates.pop();
-                        }
+                        stream_results[streamIndex].emplace_back(dist, id);
                     }
 
                     // Free pinned memory for distances
@@ -321,13 +317,30 @@ namespace hnsw {
                     // Cycle to the next stream
                     streamIndex = (streamIndex + 1) % numStreams;
 
-                    if (streamIndex == (numStreams-1) || batch_indices.empty()) {
+                    if (streamIndex == (numStreams-1)) {
                         // Synchronize all streams at the end
                         for (auto& s : streams) {
                             CUDA_CHECK(cudaStreamSynchronize(s));
                         }
+                        // Process results from all streams
+                        // After all streams have completed, process results
+                        for (const auto& results : stream_results) {
+                            for (const auto& [dist, id] : results) {
+                                if (dist < top_candidates.top().dist || top_candidates.size() < ef) {
+                                    candidates.emplace(dist, id);
+                                    top_candidates.emplace(dist, id);
+
+                                    if (top_candidates.size() > ef) top_candidates.pop();
+                                }
+                            }
+                        }
                     }
                 }
+            }
+
+            // Synchronize all streams at the end
+            for (auto& s : streams) {
+                CUDA_CHECK(cudaStreamSynchronize(s));
             }
 
             while (!top_candidates.empty()) {
