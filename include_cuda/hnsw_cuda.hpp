@@ -268,6 +268,10 @@ namespace hnsw {
                     int numNeighbors = batch_indices.size();
                     int neighborsPerStream = (numNeighbors + numStreams - 1) / numStreams;
 
+                    // Allocate pinned memory for distances once
+                    float* h_pinned_distances;
+                    CUDA_CHECK(cudaMallocHost(&h_pinned_distances, numNeighbors * sizeof(float)));
+
                     for (int s = 0; s < numStreams; ++s) {
                         int startIdx = s * neighborsPerStream;
                         int endIdx = min(startIdx + neighborsPerStream, numNeighbors);
@@ -298,11 +302,7 @@ namespace hnsw {
                         // Check for kernel launch errors
                         CUDA_CHECK(cudaGetLastError());
 
-                        // Use pinned memory for distances
-                        float* h_pinned_distances;
-                        CUDA_CHECK(cudaMallocHost(&h_pinned_distances, (endIdx - startIdx) * sizeof(float)));
-
-                        CUDA_CHECK(cudaMemcpyAsync(h_pinned_distances, d_distances_buffer + startIdx,
+                        CUDA_CHECK(cudaMemcpyAsync(h_pinned_distances + startIdx, d_distances_buffer + startIdx,
                                                    (endIdx - startIdx) * sizeof(float),
                                                    cudaMemcpyDeviceToHost, streams[s]));
 
@@ -316,30 +316,20 @@ namespace hnsw {
                     }
 
                     // Process results
-                    for (int s = 0; s < numStreams; ++s) {
-                        int startIdx = s * neighborsPerStream;
-                        int endIdx = min(startIdx + neighborsPerStream, numNeighbors);
+                    for (int i = 0; i < numNeighbors; i++) {
+                        float dist = h_pinned_distances[i];
+                        int id = batch_indices[i];
 
-                        if (startIdx >= endIdx) break;
+                        if (dist < top_candidates.top().dist || top_candidates.size() < ef) {
+                            candidates.emplace(dist, id);
+                            top_candidates.emplace(dist, id);
 
-                        float* h_pinned_distances;
-                        CUDA_CHECK(cudaMallocHost(&h_pinned_distances, (endIdx - startIdx) * sizeof(float)));
-
-                        for (size_t i = startIdx; i < endIdx; i++) {
-                            float dist = h_pinned_distances[i - startIdx];
-                            int id = batch_indices[i];
-
-                            if (dist < top_candidates.top().dist || top_candidates.size() < ef) {
-                                candidates.emplace(dist, id);
-                                top_candidates.emplace(dist, id);
-
-                                if (top_candidates.size() > ef) top_candidates.pop();
-                            }
+                            if (top_candidates.size() > ef) top_candidates.pop();
                         }
-
-                        // Free pinned memory for distances
-                        CUDA_CHECK(cudaFreeHost(h_pinned_distances));
                     }
+
+                    // Free pinned memory for distances
+                    CUDA_CHECK(cudaFreeHost(h_pinned_distances));
                 }
             }
 
