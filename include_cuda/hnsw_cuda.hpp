@@ -266,84 +266,81 @@ namespace hnsw {
 
                 if (!batch_indices.empty()) {
                     int numNeighbors = batch_indices.size();
-                    
-                    // Copy indices to GPU
-                    int* d_batch_indices;
-                    CUDA_CHECK(cudaMalloc(&d_batch_indices, numNeighbors * sizeof(int)));
-                    CUDA_CHECK(cudaMemcpyAsync(d_batch_indices, batch_indices.data(),
-                                               numNeighbors * sizeof(int),
-                                               cudaMemcpyHostToDevice, streams[streamIndex]));
+                    int neighborsPerStream = (numNeighbors + numStreams - 1) / numStreams;
 
-                    int blockSize = 256;
-                    int numBlocks = (numNeighbors + blockSize - 1) / blockSize;
-                    if (numBlocks == 0) numBlocks = 1;  // Ensure at least one block
+                    for (int s = 0; s < numStreams; ++s) {
+                        int startIdx = s * neighborsPerStream;
+                        int endIdx = min(startIdx + neighborsPerStream, numNeighbors);
 
-                    // Calculate distances using pre-stored vectors
-                    calculateDistances<<<numBlocks, blockSize, 0, streams[streamIndex]>>>(
-                        d_query_buffer,
-                        d_all_vectors,
-                        d_batch_indices,
-                        d_distances_buffer,
-                        vector_dim,
-                        numNeighbors
-                    );
+                        if (startIdx >= endIdx) break;
 
-                    // Check for kernel launch errors
-                    CUDA_CHECK(cudaGetLastError());
+                        // Copy indices to GPU
+                        int* d_batch_indices;
+                        CUDA_CHECK(cudaMalloc(&d_batch_indices, (endIdx - startIdx) * sizeof(int)));
+                        CUDA_CHECK(cudaMemcpyAsync(d_batch_indices, &batch_indices[startIdx],
+                                                   (endIdx - startIdx) * sizeof(int),
+                                                   cudaMemcpyHostToDevice, streams[s]));
 
-                    // Use pinned memory for distances
-                    float* h_pinned_distances;
-                    CUDA_CHECK(cudaMallocHost(&h_pinned_distances, numNeighbors * sizeof(float)));
+                        int blockSize = 256;
+                        int numBlocks = ((endIdx - startIdx) + blockSize - 1) / blockSize;
+                        if (numBlocks == 0) numBlocks = 1;  // Ensure at least one block
 
-                    CUDA_CHECK(cudaMemcpyAsync(h_pinned_distances, d_distances_buffer,
-                                               numNeighbors * sizeof(float),
-                                               cudaMemcpyDeviceToHost, streams[streamIndex]));
-                    
-                    CUDA_CHECK(cudaFree(d_batch_indices));
+                        // Calculate distances using pre-stored vectors
+                        calculateDistances<<<numBlocks, blockSize, 0, streams[s]>>>(
+                            d_query_buffer,
+                            d_all_vectors,
+                            d_batch_indices,
+                            d_distances_buffer + startIdx,
+                            vector_dim,
+                            endIdx - startIdx
+                        );
 
-                    // Create a vector to store results from each stream
-                    vector<vector<pair<float, int>>> stream_results(numStreams);
+                        // Check for kernel launch errors
+                        CUDA_CHECK(cudaGetLastError());
 
-                    // Collect distances and ids in a temporary container for each stream
-                    for (size_t i = 0; i < batch_indices.size(); i++) {
-                        float dist = h_pinned_distances[i];
-                        int id = batch_indices[i];
-                        stream_results[streamIndex].emplace_back(dist, id);
+                        // Use pinned memory for distances
+                        float* h_pinned_distances;
+                        CUDA_CHECK(cudaMallocHost(&h_pinned_distances, (endIdx - startIdx) * sizeof(float)));
+
+                        CUDA_CHECK(cudaMemcpyAsync(h_pinned_distances, d_distances_buffer + startIdx,
+                                                   (endIdx - startIdx) * sizeof(float),
+                                                   cudaMemcpyDeviceToHost, streams[s]));
+
+                        // Free GPU memory for indices
+                        CUDA_CHECK(cudaFree(d_batch_indices));
                     }
 
-                    // Free pinned memory for distances
-                    CUDA_CHECK(cudaFreeHost(h_pinned_distances));
+                    // Synchronize all streams
+                    for (int s = 0; s < numStreams; ++s) {
+                        CUDA_CHECK(cudaStreamSynchronize(streams[s]));
+                    }
 
-                    // Cycle to the next stream
-                    streamIndex = (streamIndex + 1) % numStreams;
+                    // Process results
+                    for (int s = 0; s < numStreams; ++s) {
+                        int startIdx = s * neighborsPerStream;
+                        int endIdx = min(startIdx + neighborsPerStream, numNeighbors);
 
-                    if (streamIndex == (numStreams-1)) {
-                        // Synchronize all streams at the end
-                        for (auto& s : streams) {
-                            CUDA_CHECK(cudaStreamSynchronize(s));
-                        }
-                        // Process results from all streams
-                        // After all streams have completed, process results
-                        for (const auto& results : stream_results) {
-                            for (const auto& result : results) {
-                                float dist = result.first;
-                                int id = result.second;
-                                
-                                if (dist < top_candidates.top().dist || top_candidates.size() < ef) {
-                                    candidates.emplace(dist, id);
-                                    top_candidates.emplace(dist, id);
+                        if (startIdx >= endIdx) break;
 
-                                    if (top_candidates.size() > ef) top_candidates.pop();
-                                }
+                        float* h_pinned_distances;
+                        CUDA_CHECK(cudaMallocHost(&h_pinned_distances, (endIdx - startIdx) * sizeof(float)));
+
+                        for (size_t i = startIdx; i < endIdx; i++) {
+                            float dist = h_pinned_distances[i - startIdx];
+                            int id = batch_indices[i];
+
+                            if (dist < top_candidates.top().dist || top_candidates.size() < ef) {
+                                candidates.emplace(dist, id);
+                                top_candidates.emplace(dist, id);
+
+                                if (top_candidates.size() > ef) top_candidates.pop();
                             }
                         }
+
+                        // Free pinned memory for distances
+                        CUDA_CHECK(cudaFreeHost(h_pinned_distances));
                     }
                 }
-            }
-
-            // Synchronize all streams at the end
-            for (auto& s : streams) {
-                CUDA_CHECK(cudaStreamSynchronize(s));
             }
 
             while (!top_candidates.empty()) {
