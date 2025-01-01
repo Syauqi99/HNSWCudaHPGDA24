@@ -272,13 +272,7 @@ namespace hnsw {
 
                         if (startIdx >= endIdx) break;
 
-                        // Copy indices to GPU
-                        int* d_batch_indices;
-                        CUDA_CHECK(cudaMalloc(&d_batch_indices, (endIdx - startIdx) * sizeof(int)));
-                        CUDA_CHECK(cudaMemcpyAsync(d_batch_indices, &batch_neighbor_ids[startIdx],
-                                                   (endIdx - startIdx) * sizeof(int),
-                                                   cudaMemcpyHostToDevice, streams[s]));
-
+                        // Copy vectors to GPU
                         CUDA_CHECK(cudaMemcpyAsync(d_neighbor_buffer, &batch_vectors[startIdx * query.x.size()],
                                                    (endIdx - startIdx) * query.x.size() * sizeof(float),
                                                    cudaMemcpyHostToDevice, streams[s]));
@@ -301,9 +295,6 @@ namespace hnsw {
                         CUDA_CHECK(cudaMemcpyAsync(h_pinned_distances + startIdx, d_distances_buffer + startIdx,
                                                    (endIdx - startIdx) * sizeof(float),
                                                    cudaMemcpyDeviceToHost, streams[s]));
-
-                        // Free GPU memory for indices
-                        CUDA_CHECK(cudaFree(d_batch_indices));
                     }
 
                     // Synchronize all streams
