@@ -271,8 +271,8 @@ namespace hnsw {
                                                    (endIdx - startIdx) * sizeof(int),
                                                    cudaMemcpyHostToDevice, streams[s]));
 
-                        CUDA_CHECK(cudaMemcpyAsync(d_neighbor_buffer, &batch_vectors[startIdx * vector_dim],
-                                                   (endIdx - startIdx) * vector_dim * sizeof(float),
+                        CUDA_CHECK(cudaMemcpyAsync(d_neighbor_buffer, &batch_vectors[startIdx * query.x.size()],
+                                                   (endIdx - startIdx) * query.x.size() * sizeof(float),
                                                    cudaMemcpyHostToDevice, streams[s]));
 
                         int blockSize = 256;
