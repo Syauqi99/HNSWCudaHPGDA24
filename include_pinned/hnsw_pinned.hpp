@@ -283,6 +283,7 @@ namespace hnsw {
                         calculateDistances<<<numBlocks, blockSize, 0, streams[s]>>>(
                             d_query_buffer,
                             d_neighbor_buffer,
+                            d_batch_indices,
                             d_distances_buffer + startIdx,
                             vector_dim,
                             endIdx - startIdx
