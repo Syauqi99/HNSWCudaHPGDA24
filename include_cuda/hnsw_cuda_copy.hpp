@@ -237,15 +237,6 @@ namespace hnsw {
             candidates.emplace(dist_from_en, start_node_id);
             top_candidates.emplace(dist_from_en, start_node_id);
 
-            // Create a list of streams
-            const int numStreams = 4;  // Number of streams to use
-            std::vector<cudaStream_t> streams(numStreams);
-            for (int i = 0; i < numStreams; ++i) {
-                CUDA_CHECK(cudaStreamCreate(&streams[i]));
-            }
-
-            int streamIndex = 0;  // To cycle through streams
-
             while (!candidates.empty()) {
                 vector<int> batch_indices;
                 
@@ -270,16 +261,16 @@ namespace hnsw {
                     // Copy indices to GPU
                     int* d_batch_indices;
                     CUDA_CHECK(cudaMalloc(&d_batch_indices, numNeighbors * sizeof(int)));
-                    CUDA_CHECK(cudaMemcpyAsync(d_batch_indices, batch_indices.data(),
-                                               numNeighbors * sizeof(int),
-                                               cudaMemcpyHostToDevice, streams[streamIndex]));
+                    CUDA_CHECK(cudaMemcpy(d_batch_indices, batch_indices.data(),
+                                          numNeighbors * sizeof(int),
+                                          cudaMemcpyHostToDevice));
 
                     int blockSize = 256;
                     int numBlocks = (numNeighbors + blockSize - 1) / blockSize;
                     if (numBlocks == 0) numBlocks = 1;  // Ensure at least one block
 
                     // Calculate distances using pre-stored vectors
-                    calculateDistances<<<numBlocks, blockSize, 0, streams[streamIndex]>>>(
+                    calculateDistances<<<numBlocks, blockSize, 0, stream>>>(
                         d_query_buffer,
                         d_all_vectors,
                         d_batch_indices,
@@ -297,9 +288,9 @@ namespace hnsw {
 
                     CUDA_CHECK(cudaMemcpyAsync(h_pinned_distances, d_distances_buffer,
                                                numNeighbors * sizeof(float),
-                                               cudaMemcpyDeviceToHost, streams[streamIndex]));
+                                               cudaMemcpyDeviceToHost, stream));
                     
-                    CUDA_CHECK(cudaStreamSynchronize(streams[streamIndex]));
+                    CUDA_CHECK(cudaStreamSynchronize(stream));
                     CUDA_CHECK(cudaFree(d_batch_indices));
 
                     // Process results
@@ -317,9 +308,6 @@ namespace hnsw {
 
                     // Free pinned memory for distances
                     CUDA_CHECK(cudaFreeHost(h_pinned_distances));
-
-                    // Cycle to the next stream
-                    streamIndex = (streamIndex + 1) % numStreams;
                 }
             }
 
@@ -332,11 +320,6 @@ namespace hnsw {
 
             // Free pinned memory for query
             CUDA_CHECK(cudaFreeHost(h_pinned_query));
-
-            // Destroy all streams
-            for (auto& s : streams) {
-                CUDA_CHECK(cudaStreamDestroy(s));
-            }
 
             return result;
         }
