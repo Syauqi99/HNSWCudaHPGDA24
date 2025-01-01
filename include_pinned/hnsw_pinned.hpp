@@ -175,6 +175,7 @@ namespace hnsw {
             // Initialize persistent GPU memory
             buffer_size = BATCH_SIZE * MAX_DIM;
             CUDA_CHECK(cudaMalloc(&d_query_buffer, MAX_DIM * sizeof(float)));
+            CUDA_CHECK(cudaMalloc(&d_neighbor_buffer, buffer_size * sizeof(float)));
             CUDA_CHECK(cudaMalloc(&d_distances_buffer, BATCH_SIZE * sizeof(float)));
 
             // Allocate pinned host memory
@@ -183,16 +184,16 @@ namespace hnsw {
         }
 
         ~HNSWPinned() {
-            if (d_all_vectors) {
-                CUDA_CHECK(cudaFree(d_all_vectors));
-            }
+            // Cleanup GPU resources
             CUDA_CHECK(cudaFree(d_query_buffer));
+            CUDA_CHECK(cudaFree(d_neighbor_buffer));
             CUDA_CHECK(cudaFree(d_distances_buffer));
 
             // Free pinned host memory
             CUDA_CHECK(cudaFreeHost(h_pinned_query));
             CUDA_CHECK(cudaFreeHost(h_pinned_distances));
 
+            // Destroy stream
             cudaStreamDestroy(stream);
         }
 
@@ -218,12 +219,6 @@ namespace hnsw {
                                        query.x.size() * sizeof(float), 
                                        cudaMemcpyHostToDevice, stream));
 
-            const auto& start_node = layers[l_c][start_node_id];
-            const auto dist_from_en = calc_dist(query, start_node.data);
-
-            candidates.emplace(dist_from_en, start_node_id);
-            top_candidates.emplace(dist_from_en, start_node_id);
-
             // Create a list of streams
             const int numStreams = 4;  // Number of streams to use
             std::vector<cudaStream_t> streams(numStreams);
@@ -231,20 +226,33 @@ namespace hnsw {
                 CUDA_CHECK(cudaStreamCreate(&streams[i]));
             }
 
-            while (!candidates.empty()) {
-                vector<int> batch_indices;
-                vector<float> batch_vectors;
+            const auto& start_node = layers[l_c][start_node_id];
+            const auto dist_from_en = calc_dist(query, start_node.data);
 
-                // Collect batch of indices and vectors
-                while (!candidates.empty() && batch_indices.size() < BATCH_SIZE) {
-                    const auto nearest = candidates.top();
+            candidates.emplace(dist_from_en, start_node_id);
+            top_candidates.emplace(dist_from_en, start_node_id);
+
+            // Vectors for batch processing
+            vector<int> batch_neighbor_ids;
+            vector<float> batch_vectors;
+            vector<float> distances(BATCH_SIZE);  // Define the distances vector
+
+            while (!candidates.empty()) {
+                batch_neighbor_ids.clear();
+                batch_vectors.clear();
+
+                // Collect neighbors for batch processing
+                while (!candidates.empty() && batch_neighbor_ids.size() < BATCH_SIZE) {
+                    const auto nearest_candidate = candidates.top();
+                    const auto& nearest_candidate_node = layers[l_c][nearest_candidate.id];
                     candidates.pop();
 
-                    if (nearest.dist > top_candidates.top().dist) break;
+                    if (nearest_candidate.dist > top_candidates.top().dist) break;
 
-                    for (const auto& neighbor : layers[l_c][nearest.id].neighbors) {
+                    // Add neighbors to batch
+                    for (const auto& neighbor : nearest_candidate_node.neighbors) {
                         if (!visited[neighbor.id]) {
-                            batch_indices.push_back(neighbor.id);
+                            batch_neighbor_ids.push_back(neighbor.id);
                             visited[neighbor.id] = true;
 
                             // Add vector data to batch
@@ -254,8 +262,8 @@ namespace hnsw {
                     }
                 }
 
-                if (!batch_indices.empty()) {
-                    int numNeighbors = batch_indices.size();
+                if (!batch_neighbor_ids.empty()) {
+                    int numNeighbors = batch_neighbor_ids.size();
                     int neighborsPerStream = (numNeighbors + numStreams - 1) / numStreams;
 
                     for (int s = 0; s < numStreams; ++s) {
@@ -264,10 +272,10 @@ namespace hnsw {
 
                         if (startIdx >= endIdx) break;
 
-                        // Copy indices and vectors to GPU
+                        // Copy indices to GPU
                         int* d_batch_indices;
                         CUDA_CHECK(cudaMalloc(&d_batch_indices, (endIdx - startIdx) * sizeof(int)));
-                        CUDA_CHECK(cudaMemcpyAsync(d_batch_indices, &batch_indices[startIdx],
+                        CUDA_CHECK(cudaMemcpyAsync(d_batch_indices, &batch_neighbor_ids[startIdx],
                                                    (endIdx - startIdx) * sizeof(int),
                                                    cudaMemcpyHostToDevice, streams[s]));
 
@@ -283,9 +291,8 @@ namespace hnsw {
                         calculateDistances<<<numBlocks, blockSize, 0, streams[s]>>>(
                             d_query_buffer,
                             d_neighbor_buffer,
-                            d_batch_indices,
                             d_distances_buffer + startIdx,
-                            vector_dim,
+                            query.x.size(),
                             endIdx - startIdx
                         );
 
@@ -304,10 +311,10 @@ namespace hnsw {
                         CUDA_CHECK(cudaStreamSynchronize(streams[s]));
                     }
 
-                    // Process results
-                    for (int i = 0; i < numNeighbors; i++) {
+                    // Update candidates and top_candidates
+                    for (size_t i = 0; i < batch_neighbor_ids.size(); i++) {
                         float dist = h_pinned_distances[i];
-                        int id = batch_indices[i];
+                        int id = batch_neighbor_ids[i];
 
                         if (dist < top_candidates.top().dist || top_candidates.size() < ef) {
                             candidates.emplace(dist, id);
