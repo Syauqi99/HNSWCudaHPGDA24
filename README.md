@@ -19,6 +19,6 @@ Run with Big Data: https://drive.google.com/file/u/0/d/1mxvrA9AfZvaQHW6ppRM_0PK9
 
 ## Credits
 
-This is a highly simplified and didactic version of https://github.com/arailly/hnsw with additional comments and parsing of .ivec/.fvec input files.
+The c++ implementations are using https://github.com/arailly/hnsw with additional comments and parsing of .ivec/.fvec input files.
 
 
