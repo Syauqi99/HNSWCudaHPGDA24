@@ -2,7 +2,7 @@
 
 This repository contains the implementation of Hierarchical Navigable Small World (HNSW) using CUDA for the High-Performance Data and Graph Analytics contest (Between Polimi & Oracle). For the experiment we provide already some google colab notebooks to run the program with the experiments provided in the report, the small and big dataset as well. This will avoid you to build the project and run the program from local.
 
-Professors: Ian Di Dio Lavore, Leonardo De Grandis, and Riccardo Strina
+**Professors**: Ian Di Dio Lavore, Leonardo De Grandis, and Riccardo Strina
 
 # Running Online
 ## Google Colab
@@ -147,9 +147,41 @@ The project is organized into several key components, each serving a specific pu
 6. **Notebooks**:
    - `tutorials`: Jupyter notebooks that we have used to learn CUDA (For our future selfs)
    - `notebooks`: Jupyter notebooks with the experiments and results provided in the report.
+The project is organized into several key components, each serving a specific purpose:
+
+1. **Source Files**:
+   - **CUDA Implementations**: 
+     - `main_cuda_test.cu`: Main CUDA implementation of the HNSW algorithm.
+     - `main_batch_test.cu`: Batch processing version.
+     - `main_pinned_test.cu`: Pinned memory version.
+     - `main_stream_test.cu`: Stream processing version.
+     - `main_allocation_test.cu`: Memory allocation version.
+   - **CPU Implementation**:
+     - `main.cpp`: CPU version of the HNSW algorithm.
+   - **Benchmarking**:
+     - `benchmark_cuda.cu`: Benchmarks for all implementations.
+
+2. **Include Directories**:
+   - `include`: General header files.
+   - `include_cuda`: CUDA-specific headers.
+   - `include_batch`: Headers for batch processing.
+   - `include_stream`: Headers for stream processing.
+   - `include_allocation`: Headers for memory allocation.
+   - `include_pinned`: Headers for pinned memory.
+
+3. **Datasets**:
+   - `datasets/siftsmall`: Contains small dataset files for testing, such as `siftsmall_base.fvecs`, `siftsmall_query.fvecs`, and `siftsmall_groundtruth.ivecs`.
+
+4. **Results**:
+   - `results`: Directory for storing output logs and results from experiments.
+
+5. **Build System**:
+   - `CMakeLists.txt`: Configuration file for building the project using CMake, specifying build options and dependencies.
+
+6. **Notebooks**:
+   - `tutorials`: Jupyter notebooks that we have used to learn CUDA (For our future selfs)
+   - `notebooks`: Jupyter notebooks with the experiments and results provided in the report.
 
 ## Credits
 
 The C++ implementations are based on [arailly/hnsw](https://github.com/arailly/hnsw) with additional comments and support for parsing `.ivec`/`.fvec` input files.
-
-
