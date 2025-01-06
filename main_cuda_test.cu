@@ -76,8 +76,8 @@ int main(int argc, char* argv[]) {
     const string save_name = "k" + to_string(k) + "-m" + to_string(m) + "-ef" + to_string(ef) +
                              "-n" + to_string(n) + "-nq" + to_string(n_query) + "-rep" + to_string(repetitions) + ".csv";
     const string result_base_dir = base_dir + "results/";
-    const string log_path = result_base_dir + "logcuda-" + save_name;
-    const string result_path = result_base_dir + "resultcuda-" + save_name;
+    const string log_path = result_base_dir + "log_cuda-" + save_name;
+    const string result_path = result_base_dir + "result_cuda-" + save_name;
     results.save(log_path, result_path);
 
     const string times_path = result_base_dir + "times_cuda-" + save_name;
