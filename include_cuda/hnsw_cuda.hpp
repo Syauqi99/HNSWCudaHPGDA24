@@ -22,19 +22,6 @@ using namespace std;
 using namespace utils;
 
 namespace hnsw {
-    // Add GPU-optimized structures
-    struct GpuNode {
-        float* data;  // Raw pointer instead of Data<> reference
-        int* neighbor_ids;
-        float* neighbor_distances;
-        int num_neighbors;
-    };
-
-    struct GpuData {
-        float* vectors;  // Contiguous array of vectors
-        int dimensions;
-        int num_vectors;
-    };
 
     __global__ void calculateDistances(
         const float* query,
@@ -135,10 +122,6 @@ namespace hnsw {
 
         mt19937 engine;
         uniform_real_distribution<double> unif_dist;
-
-        // Add GPU memory management
-        GpuData d_dataset;  // Device dataset
-        vector<GpuNode> d_nodes;  // Device nodes
         
         // Add CUDA stream for async operations
         cudaStream_t stream;

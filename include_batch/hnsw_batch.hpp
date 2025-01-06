@@ -1,5 +1,5 @@
-#ifndef HNSW_HNSW_HPP
-#define HNSW_HNSW_HPP
+#ifndef HNSW_BATCH_HPP
+#define HNSW_BATCH_HPP
 
 #include <queue>
 #include <utils_batch.hpp>
