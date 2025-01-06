@@ -14,6 +14,7 @@ This program can accept the parameters of HNSW on the main_cuda_test. For exampl
 For all our implementation we run it from Colab using T4 GPU. The link to colab is as follow:
 
 Experiment Results: https://colab.research.google.com/drive/1mJX1L5YP1NI6FhohObpJhJZx6jm-Z5Xh#scrollTo=Db17kLYGQw2M
+
 Run with Big Data: https://drive.google.com/file/u/0/d/1mxvrA9AfZvaQHW6ppRM_0PK9I_6Ux4Hb/edit
 
 
