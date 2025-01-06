@@ -2,7 +2,7 @@
 
 This repository contains the implementation of Hierarchical Navigable Small World (HNSW) using CUDA for the High-Performance Data and Graph Analytics contest (Between Polimi & Oracle). For the experiment we provide already some google colab notebooks to run the program with the experiments provided in the report, the small and big dataset as well. This will avoid you to build the project and run the program from local.
 
-Professors: Ian Di Dio Lavore, Leonardo De Grandis, and Riccardo Strina
+**Professors**: Ian Di Dio Lavore, Leonardo De Grandis, and Riccardo Strina
 
 # Running Online
 ## Google Colab
