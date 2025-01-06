@@ -148,18 +148,6 @@ The project is organized into several key components, each serving a specific pu
    - `tutorials`: Jupyter notebooks that we have used to learn CUDA (For our future selfs)
    - `notebooks`: Jupyter notebooks with the experiments and results provided in the report.
 
-## Experiment Environment
-
-Our experiments are conducted on Google Colab using a T4 GPU to ensure high performance and reproducibility. You can view the experiment results using the following link:
-
-- [Experiment Results](https://colab.research.google.com/drive/1mJX1L5YP1NI6FhohObpJhJZx6jm-Z5Xh#scrollTo=Db17kLYGQw2M)
-
-## Big Data Run
-
-For large-scale data experiments, we have also made the dataset available here:
-
-- [Run with Big Data](https://drive.google.com/file/u/0/d/1mxvrA9AfZvaQHW6ppRM_0PK9I_6Ux4Hb/edit)
-
 ## Credits
 
 The C++ implementations are based on [arailly/hnsw](https://github.com/arailly/hnsw) with additional comments and support for parsing `.ivec`/`.fvec` input files.
